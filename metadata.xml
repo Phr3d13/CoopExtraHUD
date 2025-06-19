@@ -3,22 +3,45 @@
     <name>CoopExtraHUD</name>
     <directory>coopextrahud</directory>
     <id>3502047453</id>
-    <description>
-CoopExtraHUD enhances the co-op experience in The Binding of Isaac: Repentance by displaying each player's passive collectible items in a clean, minimal grid HUD on the side of the screen. Inspired by the base game's aesthetic, the layout scales dynamically and includes optional dividing lines between player sections.
+    <description># CoopExtraHUD
 
-Still a WIP!
+**CoopExtraHUD** enhances the co-op experience in *The Binding of Isaac: Repentance+* by showing each player’s passive collectibles in a clean, minimal grid HUD on the right side of your screen.
 
-Key Features:
-- Displays passive items for each co-op player.
-- Auto-adjusting layout with optional scale and opacity control.
-- Configurable spacing, offsets, and divider position.
-- Supports Mod Config Menu for easy in-game customization.
-- Smart positioning to avoid overlapping with the map or HUD (MinimapAPI support included).
-- Debug overlay for development and positioning tweaks.
+Choose between two HUD styles:
 
-Perfect for streamers, couch co-op players, or anyone who wants better clarity in chaotic runs.
+- **Updated Preset:** Centered vertically along the right edge for balanced, easy viewing.  
+- **Vanilla+ Preset:** Right-justified just below the map area, keeping that classic feel.
+
+The HUD dynamically scales with the number of players and items, plus you can customize nearly everything — scale, opacity, spacing, offsets, and divider lines — all in-game via the Mod Config Menu.
+
+---
+
+## Features
+
+- Displays passive items for all co-op players  
+- Two HUD modes with different layouts and positioning  
+- Auto-scaling for different screen sizes and item counts  
+- Adjustable scale, opacity, spacing, and offsets  
+- Smart positioning to avoid overlapping the map or HUD elements  
+- Optional dividing lines between players  
+- Debug overlay for tweaking and troubleshooting  
+- Saves your customized settings separately for each HUD mode  
+
+---
+
+## Work in Progress
+
+- Live config updates without restarting the game  
+- More HUD presets or custom layouts  
+- Better support for unusual screen setups  
+- Support for modded collectibles  
+- Performance and debug tool improvements  
+
+---
+
+Perfect for streamers, couch co-op players, or anyone wanting clearer HUD info during hectic runs!
 </description>
-    <version></version>
+    <version></version>
     <visibility>Public</visibility>
     <tag id="Tweaks"/>
 </metadata>

@@ -3,6 +3,8 @@ local ExtraHUD = RegisterMod("CoopExtraHUD", 1)
 -- Default config values
 local config = {
     scale = 0.5,
+    xSpacing = 6,
+    ySpacing = 6,
     dividerOffset = -10,
     dividerYOffset = 0,
     xOffset = 20,
@@ -10,10 +12,34 @@ local config = {
     opacity = 0.6,
     debugOverlay = false,
     mapYOffset = 100,
+    hudMode = true, -- false = "Updated", true = "Vanilla+"
+}
+
+-- Preset configurations keyed by boolean hudMode
+local configPresets = {
+    [false] = { -- Updated
+        scale = 0.4,
+        xSpacing = 5,
+        ySpacing = 5,
+        dividerOffset = -20,
+        dividerYOffset = 0,
+        xOffset = 10,
+        yOffset = -10,
+        opacity = 0.8,
+    },
+    [true] = { -- Vanilla+
+        scale = 0.5,
+        xSpacing = 6,
+        ySpacing = 6,
+        dividerOffset = -10,
+        dividerYOffset = 0,
+        xOffset = 20,
+        yOffset = -25,
+        opacity = 0.6,
+    }
 }
 
 local ICON_SIZE = 32
-local ICON_SPACING = 6
 local COLUMNS = 2
 local INTER_PLAYER_SPACING = 12
 
@@ -42,7 +68,7 @@ local function DeserializeConfig(data)
     for k, v in string.gmatch(data, "([%w_]+)=([^;]+);") do
         if v == "true" then tbl[k] = true
         elseif v == "false" then tbl[k] = false
-        else local num = tonumber(v); if num then tbl[k] = num end
+        else local num = tonumber(v); if num then tbl[k] = num else tbl[k] = v end
         end
     end
     return tbl
@@ -85,85 +111,110 @@ local function DrawRect(x, y, w, h, col)
 end
 
 function ExtraHUD:PostRender()
-    local game, screenW, screenH = Game(), Isaac.GetScreenWidth(), Isaac.GetScreenHeight()
+    local game = Game()
+    local screenW, screenH = Isaac.GetScreenWidth(), Isaac.GetScreenHeight()
 
-    if not game:GetRoom():IsClear() and game:GetLevel():GetStage() == LevelStage.STAGE4 then
-        return
-    end
+    if not game:GetRoom():IsClear() and game:GetLevel():GetStage() == LevelStage.STAGE4 then return end
     if config.scale <= 0 or config.opacity <= 0 then return end
 
-    local yMapOffset = 0
-    local baseMapHidden = not game:GetHUD():IsVisible()
+    -- Detect if HUD is hidden (map open)
+    local hudVisible = game:GetHUD():IsVisible()
+    local yMapOffset = hudVisible and 0 or config.mapYOffset
 
-    local minimapAvailable = type(MinimapAPI) == "table" and type(MinimapAPI.GetSetting) == "function"
-
-    if minimapAvailable and MinimapAPI:GetSetting("Display") then
-        local position = MinimapAPI:GetSetting("Position") or "TopRight"
-        local scale = MinimapAPI:GetSetting("Scale") or 1
-        local size = MinimapAPI:GetSetting("MapFrameSize") or Vector(64, 64)
-
-        if position:lower():find("top") then
-            yMapOffset = size.Y * scale + 10
-        end
-    elseif baseMapHidden then
-        yMapOffset = config.mapYOffset
-    end
-
+    -- Gather player data
     local totalPlayers = game:GetNumPlayers()
     if totalPlayers == 0 then return end
+
     local playerIconData = {}
-    for i = 0, totalPlayers - 1 do
-        local items = {}
-        for id = 1, CollectibleType.NUM_COLLECTIBLES - 1 do
-            if Isaac.GetPlayer(i):HasCollectible(id) then table.insert(items, id) end
+
+    if not config.hudMode then
+        -- Vanilla+ behavior
+        local vanillaPlayers = math.min(totalPlayers, 2)
+        for i = 0, vanillaPlayers - 1 do
+            local items = {}
+            for id = 1, CollectibleType.NUM_COLLECTIBLES - 1 do
+                if Isaac.GetPlayer(i):HasCollectible(id) then table.insert(items, id) end
+            end
+            playerIconData[i + 1] = items
         end
-        table.sort(items)
-        playerIconData[i + 1] = items
+        if totalPlayers > 2 then
+            for i = 2, totalPlayers - 1 do
+                local items = {}
+                for id = 1, CollectibleType.NUM_COLLECTIBLES - 1 do
+                    if Isaac.GetPlayer(i):HasCollectible(id) then table.insert(items, id) end
+                end
+                playerIconData[i + 1] = items
+            end
+        end
+    else
+        -- Updated behavior (all players)
+        for i = 0, totalPlayers - 1 do
+            local items = {}
+            for id = 1, CollectibleType.NUM_COLLECTIBLES - 1 do
+                if Isaac.GetPlayer(i):HasCollectible(id) then table.insert(items, id) end
+            end
+            playerIconData[i + 1] = items
+        end
     end
 
+    -- Layout calculations
     local maxRows = 1
     for _, items in ipairs(playerIconData) do
         maxRows = math.max(maxRows, math.ceil(#items / COLUMNS))
     end
 
     local rawScale = config.scale
-    local maxHeight = maxRows * (ICON_SIZE + ICON_SPACING) - ICON_SPACING
+    local maxHeight = maxRows * (ICON_SIZE + config.ySpacing) - config.ySpacing
     local scale = math.min(rawScale, (screenH * 0.8) / maxHeight)
 
-    local step = (ICON_SIZE + ICON_SPACING) * scale
-    local blockW = (ICON_SIZE * COLUMNS * scale) + ((COLUMNS - 1) * ICON_SPACING * scale)
+    local stepX = (ICON_SIZE + config.xSpacing) * scale
+    local stepY = (ICON_SIZE + config.ySpacing) * scale
+    local blockW = (ICON_SIZE * COLUMNS * scale) + ((COLUMNS - 1) * config.xSpacing * scale)
     local totalW = blockW * totalPlayers + (totalPlayers - 1) * INTER_PLAYER_SPACING * scale
-    local startX = screenW - totalW - 10 + config.xOffset
+    local startX, startY
     local totalH = maxHeight * scale
-    local startY = (screenH - totalH) / 2 + config.yOffset + yMapOffset
 
+    if config.hudMode then
+        -- Updated: center vertically on right side
+        startX = screenW - totalW - 10 + config.xOffset
+        startY = (screenH - totalH) / 2 + config.yOffset + yMapOffset
+    else
+        -- Vanilla+: right justified, just below map
+        startX = screenW - totalW - 10 + config.xOffset
+        -- Position Y just below the map UI:
+        -- Isaac’s map height is roughly 100 px, use yOffset as fine adjust
+        startY = screenH - totalH - 100 + config.yOffset + yMapOffset
+    end
+
+    -- Draw icons + dividers
     for i, items in ipairs(playerIconData) do
-        local baseX = startX + (i - 1) * ((blockW) + INTER_PLAYER_SPACING * scale)
+        local baseX = startX + (i - 1) * (blockW + INTER_PLAYER_SPACING * scale)
         for idx, itemId in ipairs(items) do
             local row, col = math.floor((idx - 1) / COLUMNS), (idx - 1) % COLUMNS
-            RenderItemIcon(itemId, baseX + col * step, startY + row * step, scale, config.opacity)
+            RenderItemIcon(itemId, baseX + col * stepX, startY + row * stepY, scale, config.opacity)
         end
         if i < totalPlayers then
             local dividerX = baseX + blockW + (INTER_PLAYER_SPACING * scale) / 2 + config.dividerOffset
-            local lineChar, ds = "|", ICON_SIZE * .375 * scale
-            for l = 0, math.floor(totalH / ds) do
-                Isaac.RenderScaledText(lineChar, dividerX, startY + config.dividerYOffset + l * ds, scale, scale, 1, 1, 1, config.opacity)
+            local lineChar = "|"
+            local dividerStep = ICON_SIZE * 0.375 * scale
+            local lines = math.floor(totalH / dividerStep)
+            for l = 0, lines do
+                Isaac.RenderScaledText(lineChar, dividerX, startY + config.dividerYOffset + l * dividerStep, scale, scale, 1, 1, 1, config.opacity)
             end
         end
     end
 
+    -- Debug overlay
     if config.debugOverlay then
         Isaac.RenderText("[DEBUG overlay]", 10, 10, 1, 1, 1, 1)
         Isaac.RenderText("yMapOffset = " .. tostring(yMapOffset), 10, 25, 1, 1, 1, 1)
         for i, msg in ipairs(debugLogs) do
             Isaac.RenderText("[LOG] " .. msg, 10, 40 + i * 15, 1, 1, 1, 1)
         end
-        Isaac.RenderText("MinimapAPI: " .. tostring(minimapAvailable), 10, 60 + #debugLogs * 15, 1, 1, 1, 1)
-        Isaac.RenderText("Final yMapOffset = " .. tostring(yMapOffset), 10, 75 + #debugLogs * 15, 1, 1, 1, 1)
         DrawRect(startX, startY, totalW, totalH, Color(0, 1, 0, 0.5))
     end
 
-    AddDebugLog("Rendered HUD; mapVisible=" .. tostring(not baseMapHidden))
+    AddDebugLog("Rendered HUD; mapVisible=" .. tostring(hudVisible))
 end
 
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_RENDER, ExtraHUD.PostRender)
@@ -173,64 +224,139 @@ local function RegisterConfigMenu()
         print("[CoopExtraHUD] MCM not found; skipping menu")
         return
     end
-    local MOD, SEC = "CoopExtraHUD", "Tweaks"
-    ModConfigMenu.AddSpace(MOD, SEC)
-    ModConfigMenu.AddTitle(MOD, SEC, "Tweaks and Adjustments")
+    local MOD = "CoopExtraHUD"
+
+    -- Presets Category
+    ModConfigMenu.AddSpace(MOD, "Presets")
+    ModConfigMenu.AddTitle(MOD, "Presets", "Preset Options")
+
+    ModConfigMenu.AddSetting(MOD, "Presets", {
+        Type = ModConfigMenu.OptionType.BOOLEAN,
+        CurrentSetting = function() return config.hudMode end,
+        Display = function() return "HUD Mode: " .. (config.hudMode and "Vanilla+" or "Updated") end,
+        OnChange = function(v)
+            config.hudMode = v
+            -- Apply preset values when toggled
+            local preset = configPresets[v]
+            if preset then
+                for k, val in pairs(preset) do
+                    config[k] = val
+                end
+            end
+            SaveConfig()
+        end,
+    })
+
+    -- Reset Presets button
+ModConfigMenu.AddSetting(MOD, "Presets", {
+    Type = ModConfigMenu.OptionType.BOOLEAN,
+    CurrentSetting = function() return false end,  -- always show as false (off)
+    Display = function() return "Reset Presets to Defaults" end,
+    OnChange = function(v)
+        if v then
+            -- Reset presets to original defaults
+            configPresets[false] = {
+                scale = 0.4,
+                xSpacing = 5,
+                ySpacing = 5,
+                dividerOffset = -20,
+                dividerYOffset = 0,
+                xOffset = 10,
+                yOffset = -10,
+                opacity = 0.8,
+            }
+            configPresets[true] = {
+                scale = 0.5,
+                xSpacing = 6,
+                ySpacing = 6,
+                dividerOffset = -10,
+                dividerYOffset = 0,
+                xOffset = 20,
+                yOffset = -25,
+                opacity = 0.6,
+            }
+            -- Re-apply current preset config values to config table
+            local preset = configPresets[config.hudMode]
+            if preset then
+                for k, val in pairs(preset) do
+                    config[k] = val
+                end
+            end
+            SaveConfig()
+            print("[CoopExtraHUD] Presets reset to defaults")
+
+            -- Reset toggle to false so it can be triggered again later
+            ModConfigMenu.SetSetting(MOD, "Presets", "ResetPresets", false)
+        end
+    end,
+    Identifier = "ResetPresets"
+})
+
+    -- General Category
+    ModConfigMenu.AddSpace(MOD, "General")
+    ModConfigMenu.AddTitle(MOD, "General", "Display Options")
+
     local addNum = function(name, cur, disp, min, max, step, onchg)
-        ModConfigMenu.AddSetting(MOD, SEC, {
+        ModConfigMenu.AddSetting(MOD, "General", {
             Type = ModConfigMenu.OptionType.NUMBER,
             CurrentSetting = cur, Display = disp, OnChange = onchg,
             Minimum = min, Maximum = max, Step = step,
         })
     end
 
-    addNum("scale", function() return math.floor(config.scale*100) end,
-        function() return "HUD Scale: " .. math.floor(config.scale*100) .. "%" end,
-        20, 100, 5, function(v) config.scale = v/100; SaveConfig() end)
+    addNum("scale", function() return math.floor(config.scale * 100) end,
+        function() return "HUD Scale: " .. math.floor(config.scale * 100) .. "%" end,
+        20, 100, 5, function(v) config.scale = v / 100; SaveConfig() end)
+
+    addNum("xSpacing", function() return config.xSpacing end,
+        function() return "X Spacing: " .. config.xSpacing end,
+        0, 50, 1, function(v) config.xSpacing = v; SaveConfig() end)
+
+    addNum("ySpacing", function() return config.ySpacing end,
+        function() return "Y Spacing: " .. config.ySpacing end,
+        0, 50, 1, function(v) config.ySpacing = v; SaveConfig() end)
 
     addNum("dividerOffset", function() return config.dividerOffset end,
         function() return "Divider X Offset: " .. config.dividerOffset end,
-        -200,200,5, function(v) config.dividerOffset = v; SaveConfig() end)
+        -200, 200, 5, function(v) config.dividerOffset = v; SaveConfig() end)
 
     addNum("dividerYOffset", function() return config.dividerYOffset end,
         function() return "Divider Y Offset: " .. config.dividerYOffset end,
-        -200,200,5, function(v) config.dividerYOffset = v; SaveConfig() end)
+        -200, 200, 5, function(v) config.dividerYOffset = v; SaveConfig() end)
 
     addNum("xOffset", function() return config.xOffset end,
         function() return "HUD X Offset: " .. config.xOffset end,
-        -200,200,5, function(v) config.xOffset = v; SaveConfig() end)
+        -200, 200, 5, function(v) config.xOffset = v; SaveConfig() end)
 
     addNum("yOffset", function() return config.yOffset end,
         function() return "HUD Y Offset: " .. config.yOffset end,
-        -200,200,5, function(v) config.yOffset = v; SaveConfig() end)
+        -200, 200, 5, function(v) config.yOffset = v; SaveConfig() end)
 
-    addNum("opacity", function() return math.floor(config.opacity*100) end,
-        function() return "HUD Opacity: " .. math.floor(config.opacity*100) .. "%" end,
-        0,100,5, function(v) config.opacity = v/100; SaveConfig() end)
+    addNum("opacity", function() return math.floor(config.opacity * 100) end,
+        function() return "HUD Opacity: " .. math.floor(config.opacity * 100) .. "%" end,
+        0, 100, 5, function(v) config.opacity = v / 100; SaveConfig() end)
 
     addNum("mapYOffset", function() return config.mapYOffset end,
-        function() return "Map Y‑Offset: " .. config.mapYOffset .. " px" end,
+        function() return "Map Y-Offset: " .. config.mapYOffset .. " px" end,
         0, 300, 10, function(v) config.mapYOffset = v; SaveConfig() end)
 
-    ModConfigMenu.AddSetting(MOD, SEC, {
+    ModConfigMenu.AddSetting(MOD, "General", {
         Type = ModConfigMenu.OptionType.BOOLEAN,
         CurrentSetting = function() return config.debugOverlay end,
         Display = function() return "Debug Overlay: " .. (config.debugOverlay and "On" or "Off") end,
         OnChange = function(v) config.debugOverlay = v; SaveConfig() end,
     })
+
     print("[CoopExtraHUD] Config menu registered.")
 end
 
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
     LoadConfig()
-    if not ExtraHUD._configMenuRegistered then
-        RegisterConfigMenu()
-        ExtraHUD._configMenuRegistered = true
-    end
+    RegisterConfigMenu()
 end)
 
 ExtraHUD:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, function()
     SaveConfig()
 end)
 
-print("[CoopExtraHUD] Fully loaded with map-aware HUD shifting!")
+print("[CoopExtraHUD] Fully loaded with HUD mode support and configurable spacing!")
