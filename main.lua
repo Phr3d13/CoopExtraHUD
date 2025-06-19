@@ -171,20 +171,9 @@ function ExtraHUD:PostRender()
     local stepY = (ICON_SIZE + config.ySpacing) * scale
     local blockW = (ICON_SIZE * COLUMNS * scale) + ((COLUMNS - 1) * config.xSpacing * scale)
     local totalW = blockW * totalPlayers + (totalPlayers - 1) * INTER_PLAYER_SPACING * scale
-    local startX, startY
+    local startX = screenW - totalW - 10 + config.xOffset
     local totalH = maxHeight * scale
-
-    if config.hudMode then
-        -- Updated: center vertically on right side
-        startX = screenW - totalW - 10 + config.xOffset
-        startY = (screenH - totalH) / 2 + config.yOffset + yMapOffset
-    else
-        -- Vanilla+: right justified, just below map
-        startX = screenW - totalW - 10 + config.xOffset
-        -- Position Y just below the map UI:
-        -- Isaac’s map height is roughly 100 px, use yOffset as fine adjust
-        startY = screenH - totalH - 100 + config.yOffset + yMapOffset
-    end
+    local startY = (screenH - totalH) / 2 + config.yOffset + yMapOffset
 
     -- Draw icons + dividers
     for i, items in ipairs(playerIconData) do
@@ -219,11 +208,17 @@ end
 
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_RENDER, ExtraHUD.PostRender)
 
+local configMenuRegistered = false
+
 local function RegisterConfigMenu()
+    if configMenuRegistered then return end  -- Prevent duplicate registration
+    configMenuRegistered = true
+
     if not ModConfigMenu then
         print("[CoopExtraHUD] MCM not found; skipping menu")
         return
     end
+
     local MOD = "CoopExtraHUD"
 
     -- Presets Category
@@ -246,51 +241,6 @@ local function RegisterConfigMenu()
             SaveConfig()
         end,
     })
-
-    -- Reset Presets button
-ModConfigMenu.AddSetting(MOD, "Presets", {
-    Type = ModConfigMenu.OptionType.BOOLEAN,
-    CurrentSetting = function() return false end,  -- always show as false (off)
-    Display = function() return "Reset Presets to Defaults" end,
-    OnChange = function(v)
-        if v then
-            -- Reset presets to original defaults
-            configPresets[false] = {
-                scale = 0.4,
-                xSpacing = 5,
-                ySpacing = 5,
-                dividerOffset = -20,
-                dividerYOffset = 0,
-                xOffset = 10,
-                yOffset = -10,
-                opacity = 0.8,
-            }
-            configPresets[true] = {
-                scale = 0.5,
-                xSpacing = 6,
-                ySpacing = 6,
-                dividerOffset = -10,
-                dividerYOffset = 0,
-                xOffset = 20,
-                yOffset = -25,
-                opacity = 0.6,
-            }
-            -- Re-apply current preset config values to config table
-            local preset = configPresets[config.hudMode]
-            if preset then
-                for k, val in pairs(preset) do
-                    config[k] = val
-                end
-            end
-            SaveConfig()
-            print("[CoopExtraHUD] Presets reset to defaults")
-
-            -- Reset toggle to false so it can be triggered again later
-            ModConfigMenu.SetSetting(MOD, "Presets", "ResetPresets", false)
-        end
-    end,
-    Identifier = "ResetPresets"
-})
 
     -- General Category
     ModConfigMenu.AddSpace(MOD, "General")
