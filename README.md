@@ -1,40 +1,38 @@
-# CoopExtraHUD
+**CoopExtraHUD** enhances the co-op experience in *The Binding of Isaac: Repentance+* by showing each player’s passive collectibles in a clean, minimal grid HUD on the right side of your screen.
 
-**CoopExtraHUD** is a mod for *The Binding of Isaac: Repentance+* designed to improve the cooperative multiplayer experience by displaying each player's passive collectible items in a clean and intuitive HUD.
+Choose between two HUD styles:
 
-## Features
+- **Updated Preset:** Centered vertically along the right edge for balanced, easy viewing.  
+- **Vanilla+ Preset:** Right-justified just below the map area, keeping that classic feel.
 
-- Displays passive collectibles for all co-op players  
-- Two selectable HUD presets:
-  - **Updated:** Icons centered vertically on the right side of the screen  
-  - **Vanilla+:** Icons right-justified below the map area, resembling the classic HUD style  
-- Dynamic scaling to fit various screen sizes and item counts  
-- Configurable scale, opacity, spacing, offsets, and divider line positions  
-- Optional dividing lines between player sections for visual clarity  
-- Smart positioning to prevent overlap with map or other HUD elements  
-- Debug overlay for development and troubleshooting  
-- Settings saved independently per HUD preset for personalized customization  
-
-## Usage
-
-Use the in-game Mod Config Menu to toggle HUD presets, adjust layout parameters, and enable debug overlays. Changes are saved and restored per preset.
-
-## Development & Contribution
-
-This mod is a work in progress. Contributions and feedback are welcome! Please open issues or pull requests on the [GitHub repository](https://github.com/Phr3d13/CoopExtraHUD).
-
-## Known Issues and TODO
-
-- Live configuration updates without needing to restart the game  
-- Additional HUD presets and more layout options  
-- Enhanced compatibility with modded collectibles  
-- Improvements to performance and debugging tools  
-- Support for unusual screen resolutions and aspect ratios  
-
-## License
-
-Distributed under the MIT License. See `LICENSE` for details.
+The HUD dynamically scales with the number of players and items, plus you can customize nearly everything — scale, opacity, spacing, offsets, and divider lines — all in-game via the Mod Config Menu.
 
 ---
 
-Perfect for streamers, couch co-op players, and anyone who wants clearer, customizable HUD information during multiplayer runs.
+## Features (Working)
+
+- Displays passive items for all co-op players, including multiplayer and new player joins
+- Tracks and displays collectibles in true pickup order per player
+- Two HUD modes with different layouts and positioning
+- Auto-scaling for different screen sizes and item counts
+- Adjustable scale, opacity, spacing, and offsets
+- Smart positioning to avoid overlapping the map or HUD elements
+- Optional dividing lines between players
+- Debug overlay for tweaking and troubleshooting
+- Saves your customized settings separately for each HUD mode
+- Mod Config Menu integration (presets, reset, etc.)
+- No known errors in log or in-game
+
+---
+
+## Work in Progress / Planned
+
+- Live config updates without restarting the game (some changes require restart)
+- More HUD presets or custom layouts
+- Better support for unusual screen setups
+- Support for modded collectibles (currently only vanilla collectibles are tracked)
+- Further performance and debug tool improvements
+
+---
+
+Perfect for streamers, couch co-op players, or anyone wanting clearer HUD info during hectic runs!
