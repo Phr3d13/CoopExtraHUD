@@ -27,7 +27,6 @@ The HUD dynamically scales with the number of players and items, plus you can cu
 
 ## Work in Progress / Planned
 
-- Live config updates without restarting the game (some changes require restart)
 - More HUD presets or custom layouts
 - Better support for unusual screen setups
 - Support for modded collectibles (currently only vanilla collectibles are tracked)
