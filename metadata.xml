@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <metadata>
     <name>CoopExtraHUD</name>
-    <directory>coopextrahud</directory>
+    <directory>CoopExtraHUD</directory>
     <id>3502047453</id>
     <description>**CoopExtraHUD** enhances the co-op experience in *The Binding of Isaac: Repentance+* by showing each player’s passive collectibles in a clean, minimal grid HUD on the right side of your screen.
 
@@ -32,7 +32,6 @@ The HUD dynamically scales with the number of players and items, plus you can cu
 
 ## Work in Progress / Planned
 
-- Live config updates without restarting the game (some changes require restart)
 - More HUD presets or custom layouts
 - Better support for unusual screen setups
 - Support for modded collectibles (currently only vanilla collectibles are tracked)
