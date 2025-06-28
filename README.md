@@ -16,7 +16,6 @@ The HUD dynamically scales with the number of players and items, plus you can cu
 - Two HUD modes with different layouts and positioning
 - Auto-scaling for different screen sizes and item counts
 - Adjustable scale, opacity, spacing, and offsets
-- Smart positioning to avoid overlapping the map or HUD elements
 - Optional dividing lines between players
 - Debug overlay for tweaking and troubleshooting
 - Saves your customized settings separately for each HUD mode
