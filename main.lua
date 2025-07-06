@@ -1,55 +1,63 @@
 local ExtraHUD = RegisterMod("CoopExtraHUD", 1)
 
 -- Default config values
-local config = {
-    scale = 0.5,
-    xSpacing = 6,
-    ySpacing = 6,
-    dividerOffset = -10,
-    dividerYOffset = 0,
-    xOffset = 20,
-    yOffset = -25,
-    opacity = 0.6,
-    debugOverlay = false,
+local config = nil -- will be set by MCM.Init
+
+-- Temporary default config for early access (before MCM.Init)
+local defaultConfig = {
+    scale = 0.4, -- updated default
+    xSpacing = 5, -- updated default
+    ySpacing = 5, -- updated default
+    dividerOffset = -7, -- updated default
+    dividerYOffset = -14, -- updated default
+    xOffset = 0, -- updated default
+    yOffset = 0, -- updated default
+    opacity = 0.6, -- updated default
     mapYOffset = 100,
-    hudMode = true, -- false = "Updated", true = "Vanilla+"
-    -- HUD boundary (screen clamp)
-    boundaryX = 0,
-    boundaryY = 0,
-    boundaryW = 1920,
-    boundaryH = 1080,
-    -- User-defined minimap area to avoid
-    minimapX = 1760, -- example default for 1920x1080 top-right
-    minimapY = 0,
-    minimapW = 160,
-    minimapH = 160,
-    minimapPadding = 2, -- user-configurable vertical padding below minimap
-    -- Fallback: always show overlays in MCM
+    hudMode = true,
+    boundaryX = 215, -- updated default
+    boundaryY = 49, -- updated default
+    boundaryW = 270, -- updated default
+    boundaryH = 184, -- updated default
+    minimapX = 344, -- updated default
+    minimapY = 0, -- updated default
+    minimapW = 141, -- updated default
+    minimapH = 101, -- updated default
+    minimapPadding = 2,
     alwaysShowOverlayInMCM = false,
+    debugOverlay = false,
+    _mcm_map_overlay_refresh = 244,
+    _mcm_boundary_overlay_refresh = 574,
 }
 
+-- Helper to get config safely before MCM.Init
+local function getConfig()
+    return config or defaultConfig
+end
+
 -- Preset configurations keyed by boolean hudMode
-local configPresets = {
-    [false] = { -- Updated
-        scale = 0.4,
-        xSpacing = 5,
-        ySpacing = 5,
-        dividerOffset = -20,
-        dividerYOffset = 0,
-        xOffset = 10,
-        yOffset = -10,
-        opacity = 0.8,
-    },
-    [true] = { -- Vanilla+
-        scale = 0.6,
-        xSpacing = 8,
-        ySpacing = 8,
-        dividerOffset = -16,
-        dividerYOffset = 0,
-        xOffset = 32,
-        yOffset = 32, -- Changed from -32 to 32 for visible top anchor
-        opacity = 0.85,
-    }
+local configPresets = nil -- will be set by MCM.Init
+
+local defaultConfigPresets = {}
+defaultConfigPresets[false] = { -- Updated
+    xSpacing = 5,
+    dividerOffset = -20,
+    opacity = 0.8,
+    ySpacing = 5,
+    dividerYOffset = 0,
+    scale = 0.4,
+    yOffset = -10,
+    xOffset = 10,
+}
+defaultConfigPresets[true] = { -- Vanilla+
+    xSpacing = 8,
+    dividerOffset = -16,
+    opacity = 0.85,
+    ySpacing = 8,
+    dividerYOffset = 0,
+    scale = 0.6,
+    yOffset = 32,
+    xOffset = 32,
 }
 
 local ICON_SIZE = 32
@@ -221,6 +229,7 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_PICKUP_UPDATE, function(_, pickup)
     end
 end)
 
+
 -- Config serialization
 local function SerializeConfig(tbl)
     local str = ""
@@ -241,16 +250,12 @@ local function DeserializeConfig(data)
     return tbl
 end
 
--- Helper to serialize/deserialize both config and presets
 local function SerializeAllConfigs()
     local str = "[config]" .. SerializeConfig(config) .. "[preset_false]" .. SerializeConfig(configPresets[false]) .. "[preset_true]" .. SerializeConfig(configPresets[true])
     return str
 end
 
 local function DeserializeAllConfigs(data)
-    local function extractSection(tag)
-        return data:match("%["..tag.."%](.-)%["), data:match("%["..tag.."%](.-)%["..(tag=="preset_true" and "$" or ""))
-    end
     local configStr = data:match("%[config%](.-)%[preset_false%]") or ""
     local presetFalseStr = data:match("%[preset_false%](.-)%[preset_true%]") or ""
     local presetTrueStr = data:match("%[preset_true%](.*)$") or ""
@@ -261,31 +266,32 @@ local function DeserializeAllConfigs(data)
     }
 end
 
+-- Save/load helpers using Isaac's mod data API
 local function SaveConfig()
-    ExtraHUD:SaveData(SerializeAllConfigs())
-    AddDebugLog("[Config] Saved (with presets)")
+    if config then
+        ExtraHUD:SaveData(SerializeAllConfigs())
+    end
 end
 
 local function LoadConfig()
     if ExtraHUD:HasData() then
-        local all = DeserializeAllConfigs(ExtraHUD:LoadData())
-        for k, v in pairs(all.config) do if config[k] ~= nil then config[k] = v end end
-        for k, v in pairs(all.preset_false) do if configPresets[false][k] ~= nil then configPresets[false][k] = v end end
-        for k, v in pairs(all.preset_true) do if configPresets[true][k] ~= nil then configPresets[true][k] = v end end
-        AddDebugLog("[Config] Loaded (with presets)")
-    else
-        AddDebugLog("[Config] Default used")
+        local data = ExtraHUD:LoadData()
+        local all = DeserializeAllConfigs(data)
+        for k, v in pairs(all.config or {}) do config[k] = v end
+        for k, v in pairs(all.preset_false or {}) do configPresets[false][k] = v end
+        for k, v in pairs(all.preset_true or {}) do configPresets[true][k] = v end
     end
 end
 
--- When a setting is changed, update the current preset as well
 local function UpdateCurrentPreset()
-    local preset = configPresets[config.hudMode]
-    for k, v in pairs(config) do
-        if preset[k] ~= nil then preset[k] = v end
-    end
-    MarkHudDirty()
+    -- Optionally update configPresets based on current config/hudMode
+    -- (implement as needed)
 end
+
+-- Assign these before MCM.Init
+SaveConfig = SaveConfig
+LoadConfig = LoadConfig
+UpdateCurrentPreset = UpdateCurrentPreset
 
 -- Render a single item icon (now uses cache)
 local function RenderItemIcon(itemId, x, y, scale, opa)
@@ -310,93 +316,53 @@ local function GetMiniMapiBounds()
     return { x = pos.X, y = pos.Y, w = size.X, h = size.Y }
 end
 
--- Extra debug: log all global keys containing 'mini'
-local function LogMiniGlobals()
-    local found = {}
-    for k, v in pairs(_G) do
-        if type(k) == "string" and k:lower():find("mini") then
-            table.insert(found, k .. " (" .. tostring(type(v)) .. ")")
-        end
-    end
-    return table.concat(found, ", ")
-end
 
--- Helper: get number of columns for a player's HUD block
-local function getPlayerColumns(numItems)
-    return COLUMNS
-end
 
--- Only one set of HUD cache and update functions, defined here:
--- REMOVE any duplicate definitions of cachedPlayerIconData, cachedPlayerCount, hudDirty, MarkHudDirty, UpdatePlayerIconData below this point!
 
--- Patch: mark HUD dirty on all relevant events
-local oldTrackAllCurrentCollectibles = TrackAllCurrentCollectibles
-TrackAllCurrentCollectibles = function(...)
-    oldTrackAllCurrentCollectibles(...)
-    MarkHudDirty()
-end
 
-local oldPostUpdate = ExtraHUD["MC_POST_UPDATE_callback"]
-ExtraHUD["MC_POST_UPDATE_callback"] = function(...)
-    if oldPostUpdate then oldPostUpdate(...) end
-    MarkHudDirty()
-end
 
-local oldPickupUpdate = ExtraHUD["MC_POST_PICKUP_UPDATE_callback"]
-ExtraHUD["MC_POST_PICKUP_UPDATE_callback"] = function(...)
-    if oldPickupUpdate then oldPickupUpdate(...) end
-    MarkHudDirty()
-end
 
--- Also mark HUD dirty on config changes
-local oldUpdateCurrentPreset = UpdateCurrentPreset
-UpdateCurrentPreset = function(...)
-    oldUpdateCurrentPreset(...)
-    MarkHudDirty()
-end
 
--- Helper: log to log.txt
-local function LogToFile(msg)
-    Isaac.DebugString("[CoopExtraHUD] " .. msg)
-end
 
-local currentOverlayType = "boundary" -- "boundary" or "minimap"
-local overlayTimer = 0 -- frames to show overlay after change
+-- Dual-flag overlay logic (set by MCM.lua)
+ExtraHUD.MCMCompat_displayingOverlay = ""
+ExtraHUD.MCMCompat_selectedOverlay = ""
 
 function ExtraHUD:PostRender()
     local game = Game()
     local screenW, screenH = Isaac.GetScreenWidth(), Isaac.GetScreenHeight()
     -- Defensive: ensure all config values are not nil before use
-    config.boundaryX = config.boundaryX or 0
-    config.boundaryY = config.boundaryY or 0
-    config.boundaryW = config.boundaryW or screenW
-    config.boundaryH = config.boundaryH or screenH
-    config.minimapX = config.minimapX or 0
-    config.minimapY = config.minimapY or 0
-    config.minimapW = config.minimapW or 0
-    config.minimapH = config.minimapH or 0
-    config.minimapPadding = config.minimapPadding or 0
-    config.xOffset = config.xOffset or 0
-    config.yOffset = config.yOffset or 0
-    config.scale = config.scale or 1
-    config.opacity = config.opacity or 1
-    config.xSpacing = config.xSpacing or 0
-    config.ySpacing = config.ySpacing or 0
-    config.dividerOffset = config.dividerOffset or 0
-    config.dividerYOffset = config.dividerYOffset or 0
+    local cfg = getConfig()
+    cfg.boundaryX = cfg.boundaryX or 0
+    cfg.boundaryY = cfg.boundaryY or 0
+    cfg.boundaryW = cfg.boundaryW or screenW
+    cfg.boundaryH = cfg.boundaryH or screenH
+    cfg.minimapX = cfg.minimapX or 0
+    cfg.minimapY = cfg.minimapY or 0
+    cfg.minimapW = cfg.minimapW or 0
+    cfg.minimapH = cfg.minimapH or 0
+    cfg.minimapPadding = cfg.minimapPadding or 0
+    cfg.xOffset = cfg.xOffset or 0
+    cfg.yOffset = cfg.yOffset or 0
+    cfg.scale = cfg.scale or 1
+    cfg.opacity = cfg.opacity or 1
+    cfg.xSpacing = cfg.xSpacing or 0
+    cfg.ySpacing = cfg.ySpacing or 0
+    cfg.dividerOffset = cfg.dividerOffset or 0
+    cfg.dividerYOffset = cfg.dividerYOffset or 0
     -- Clamp boundary to screen size (allow full range)
-    config.boundaryW = math.max(32, math.min(config.boundaryW, screenW))
-    config.boundaryH = math.max(32, math.min(config.boundaryH, screenH))
-    config.boundaryX = math.max(0, math.min(config.boundaryX, screenW - 1))
-    config.boundaryY = math.max(0, math.min(config.boundaryY, screenH - 1))
+    cfg.boundaryW = math.max(32, math.min(cfg.boundaryW, screenW))
+    cfg.boundaryH = math.max(32, math.min(cfg.boundaryH, screenH))
+    cfg.boundaryX = math.max(0, math.min(cfg.boundaryX, screenW - 1))
+    cfg.boundaryY = math.max(0, math.min(cfg.boundaryY, screenH - 1))
     -- Clamp minimap area to screen
-    config.minimapW = math.max(0, math.min(config.minimapW, screenW))
-    config.minimapH = math.max(0, math.min(config.minimapH, screenH))
-    config.minimapX = math.max(0, math.min(config.minimapX, screenW - 1))
-    config.minimapY = math.max(0, math.min(config.minimapY, screenH - 1))
+    cfg.minimapW = math.max(0, math.min(cfg.minimapW, screenW))
+    cfg.minimapH = math.max(0, math.min(cfg.minimapH, screenH))
+    cfg.minimapX = math.max(0, math.min(cfg.minimapX, screenW - 1))
+    cfg.minimapY = math.max(0, math.min(cfg.minimapY, screenH - 1))
     local hudVisible = game:GetHUD():IsVisible()
     local isPaused = game:IsPaused()
-    local yMapOffset = (not hudVisible and isPaused) and config.mapYOffset or 0
+    local yMapOffset = (not hudVisible and isPaused) and cfg.mapYOffset or 0
     -- Only update player icon data cache if dirty or player count changed
     local totalPlayers = game:GetNumPlayers()
     if hudDirty or not cachedPlayerIconData or cachedPlayerCount ~= totalPlayers then
@@ -405,24 +371,49 @@ function ExtraHUD:PostRender()
     local playerIconData = cachedPlayerIconData
     if not playerIconData then return end
     -- Layout calculations (always recalculate every frame for boundary clamp)
-    local maxRows = 1
-    local playerColumns = {}
-    for i, items in ipairs(playerIconData) do
-        local cols = getPlayerColumns(#items)
-        playerColumns[i] = cols
-        maxRows = math.max(maxRows, math.ceil(#items / cols))
+local function getPlayerColumns(itemCount)
+    local maxCols = 4
+    -- Calculate columns by dividing itemCount by 8, rounding up, capped at maxCols
+    local cols = math.ceil(itemCount / 8)
+    if cols > maxCols then
+        cols = maxCols
+    elseif cols < 1 then
+        cols = 1
     end
-    local rawScale = config.scale
-    local maxHeight = maxRows * (ICON_SIZE + config.ySpacing) - config.ySpacing
-    local scale = rawScale
-    if not config.hudMode then
-        scale = math.min(rawScale, (screenH * 0.8) / maxHeight)
+    return cols
+end
+
+local maxRows = 1
+local playerColumns = {}
+
+-- Calculate columns and max rows needed
+for i, items in ipairs(playerIconData) do
+    local itemCount = #items
+    local cols = getPlayerColumns(itemCount)
+    playerColumns[i] = cols
+    local rows = math.ceil(itemCount / cols)
+    maxRows = math.max(maxRows, rows)
+end
+
+local rawScale = cfg.scale
+
+-- Calculate max height with current columns before scaling
+local maxHeight = maxRows * (ICON_SIZE + cfg.ySpacing) - cfg.ySpacing
+
+local scale = rawScale
+
+if not cfg.hudMode then
+    -- Scale down if HUD would exceed 80% of screen height
+    if maxHeight * rawScale > screenH * 0.8 then
+        scale = (screenH * 0.8) / maxHeight
+        scale = math.min(scale, rawScale)
     end
+end
     -- Calculate block width per player
     local blockWs = {}
     for i, items in ipairs(playerIconData) do
         local cols = playerColumns[i]
-        blockWs[i] = (ICON_SIZE * cols * scale) + ((cols - 1) * config.xSpacing * scale)
+        blockWs[i] = (ICON_SIZE * cols * scale) + ((cols - 1) * cfg.xSpacing * scale)
     end
     local totalW = 0
     for i = 1, #blockWs do
@@ -432,21 +423,21 @@ function ExtraHUD:PostRender()
     local totalH = maxHeight * scale
     -- Improved boundary anchoring logic
     local startX, startY
-    if config.hudMode then
+    if cfg.hudMode then
         -- Vanilla+: anchor to top-right of boundary, plus offsets
-        startX = config.boundaryX + config.boundaryW - totalW + config.xOffset
-        startY = config.boundaryY + config.yOffset
+        startX = cfg.boundaryX + cfg.boundaryW - totalW + cfg.xOffset
+        startY = cfg.boundaryY + cfg.yOffset
     else
         -- Updated: center vertically in boundary, right-aligned
-        startX = config.boundaryX + config.boundaryW - totalW + config.xOffset
-        startY = config.boundaryY + ((config.boundaryH - totalH) / 2) + config.yOffset
+        startX = cfg.boundaryX + cfg.boundaryW - totalW + cfg.xOffset
+        startY = cfg.boundaryY + ((cfg.boundaryH - totalH) / 2) + cfg.yOffset
     end
     -- Minimap avoidance: if HUD would overlap minimap area, move HUD below minimap (with padding)
-    local minimapX = tonumber(config.minimapX) or 0
-    local minimapY = tonumber(config.minimapY) or 0
-    local minimapW = tonumber(config.minimapW) or 0
-    local minimapH = tonumber(config.minimapH) or 0
-    local minimapPadding = tonumber(config.minimapPadding) or 0
+    local minimapX = tonumber(cfg.minimapX) or 0
+    local minimapY = tonumber(cfg.minimapY) or 0
+    local minimapW = tonumber(cfg.minimapW) or 0
+    local minimapH = tonumber(cfg.minimapH) or 0
+    local minimapPadding = tonumber(cfg.minimapPadding) or 0
     if minimapW > 0 and minimapH > 0 then
         local hudLeft = startX
         local hudRight = startX + totalW
@@ -462,13 +453,13 @@ function ExtraHUD:PostRender()
         end
     end
     -- Clamp to boundary (prevent going outside)
-    if startX < config.boundaryX then startX = config.boundaryX end
-    if startY < config.boundaryY then startY = config.boundaryY end
-    if startX + totalW > config.boundaryX + config.boundaryW then
-        startX = config.boundaryX + config.boundaryW - totalW
+    if startX < cfg.boundaryX then startX = cfg.boundaryX end
+    if startY < cfg.boundaryY then startY = cfg.boundaryY end
+    if startX + totalW > cfg.boundaryX + cfg.boundaryW then
+        startX = cfg.boundaryX + cfg.boundaryW - totalW
     end
-    if startY + totalH > config.boundaryY + config.boundaryH then
-        startY = config.boundaryY + config.boundaryH - totalH
+    if startY + totalH > cfg.boundaryY + cfg.boundaryH then
+        startY = cfg.boundaryY + cfg.boundaryH - totalH
     end
     -- Draw icons + dividers
     local curX = startX
@@ -479,28 +470,28 @@ function ExtraHUD:PostRender()
         for idx, itemId in ipairs(items) do
             local row = math.floor((idx - 1) / cols)
             local col = (idx - 1) % cols
-            local x = curX + col * (ICON_SIZE + config.xSpacing) * scale
-            local y = startY + row * (ICON_SIZE + config.ySpacing) * scale
-            RenderItemIcon(itemId, x, y, scale, config.opacity)
+            local x = curX + col * (ICON_SIZE + cfg.xSpacing) * scale
+            local y = startY + row * (ICON_SIZE + cfg.ySpacing) * scale
+            RenderItemIcon(itemId, x, y, scale, cfg.opacity)
         end
         if i < #playerIconData then
-            local dividerX = curX + blockW + (INTER_PLAYER_SPACING * scale) / 2 + config.dividerOffset
+            local dividerX = curX + blockW + (INTER_PLAYER_SPACING * scale) / 2 + cfg.dividerOffset
             local lineChar = "|"
             local dividerStep = ICON_SIZE * 0.375 * scale
             local lines = math.floor(totalH / dividerStep)
             for l = 0, lines do
-                Isaac.RenderScaledText(lineChar, dividerX, startY + config.dividerYOffset + l * dividerStep, scale, scale, 1, 1, 1, config.opacity)
+                Isaac.RenderScaledText(lineChar, dividerX, startY + cfg.dividerYOffset + l * dividerStep, scale, scale, 1, 1, 1, cfg.opacity)
             end
         end
         curX = curX + blockW + INTER_PLAYER_SPACING * scale
     end
     -- Debug overlay: only draw the HUD boundary border, no text or callback names
-    if config.debugOverlay then
+    if cfg.debugOverlay then
         -- Draw a lineart border for the HUD boundary for debug/adjustment (NO TEXT)
-        local bx = tonumber(config.boundaryX) or 0
-        local by = tonumber(config.boundaryY) or 0
-        local bw = tonumber(config.boundaryW) or 0
-        local bh = tonumber(config.boundaryH) or 0
+        local bx = tonumber(cfg.boundaryX) or 0
+        local by = tonumber(cfg.boundaryY) or 0
+        local bw = tonumber(cfg.boundaryW) or 0
+        local bh = tonumber(cfg.boundaryH) or 0
         if bw > 0 and bh > 0 then
             for i=0,bw,32 do
                 Isaac.RenderText("-", bx+i, by, 1, 1, 1, 1)
@@ -512,34 +503,31 @@ function ExtraHUD:PostRender()
             end
         end
     end
-    -- Show overlays only when relevant MCM setting is being adjusted or hovered
+    -- Only show overlays if MCM is open and both Display and Selected flags match
     local mcm = _G['ModConfigMenu']
-    local showBoundary = false
-    local showMinimap = false
-    local mcmIsVisible = false
-    local inDisplaySection = false
-    local mcmHideHud = false
-    -- Overlay logic: manual toggles always force overlays, regardless of menu section
-    if config.showBoundaryOverlayManual then
-        showBoundary = true
-    elseif config.showMinimapOverlayManual then
-        showMinimap = true
-    -- Fallback: always show overlays in MCM if enabled and MCM is loaded and visible (function or boolean)
-    elseif config.alwaysShowOverlayInMCM and mcm and mcm.IsVisible and ((type(mcm.IsVisible) == "function" and mcm.IsVisible()) or (type(mcm.IsVisible) == "boolean" and mcm.IsVisible)) then
-        if currentOverlayType == "boundary" then showBoundary = true end
-        if currentOverlayType == "minimap" then showMinimap = true end
-    elseif mcmIsVisible and not mcmHideHud and inDisplaySection then
-        if currentOverlayType == "boundary" then showBoundary = true end
-        if currentOverlayType == "minimap" then showMinimap = true end
+    local mcmIsOpen = mcm and ((type(mcm.IsVisible) == "function" and mcm.IsVisible()) or (type(mcm.IsVisible) == "boolean" and mcm.IsVisible))
+    local showBoundary, showMinimap = false, false
+    if mcmIsOpen then
+        if ExtraHUD.MCMCompat_displayingOverlay == "boundary" and ExtraHUD.MCMCompat_selectedOverlay == "boundary" then
+            showBoundary = true
+        elseif ExtraHUD.MCMCompat_displayingOverlay == "minimap" and ExtraHUD.MCMCompat_selectedOverlay == "minimap" then
+            showMinimap = true
+        end
+    else
+        -- Always clear overlay flags when MCM is closed
+        if ExtraHUD.MCMCompat_displayingOverlay ~= "" or ExtraHUD.MCMCompat_selectedOverlay ~= "" then
+            ExtraHUD.MCMCompat_displayingOverlay = ""
+            ExtraHUD.MCMCompat_selectedOverlay = ""
+        end
     end
     -- Draw overlays as needed (text/lines only, sprite code removed)
     if showBoundary then
-        local bx = tonumber(config.boundaryX) or 0
-        local by = tonumber(config.boundaryY) or 0
-        local bw = tonumber(config.boundaryW) or 0
-        local bh = tonumber(config.boundaryH) or 0
+        local bx = tonumber(cfg.boundaryX) or 0
+        local by = tonumber(cfg.boundaryY) or 0
+        local bw = tonumber(cfg.boundaryW) or 0
+        local bh = tonumber(cfg.boundaryH) or 0
         if bw > 0 and bh > 0 then
-            Isaac.RenderText("[NO SPRITE]", bx+4, by+4, 1, 0, 0, 1)
+            Isaac.RenderText("Boundary", bx+4, by+4, 1, 0, 0, 1)
             for i=0,bw,32 do
                 Isaac.RenderText("-", bx+i, by, 1, 0, 0, 1)
                 Isaac.RenderText("-", bx+i, by+bh-8, 1, 0, 0, 1)
@@ -552,12 +540,12 @@ function ExtraHUD:PostRender()
             AddDebugLog("[Overlay] showBoundary: boundary config value(s) nil or zero, skipping overlay")
         end
     elseif showMinimap then
-        local mx = tonumber(config.minimapX) or 0
-        local my = tonumber(config.minimapY) or 0
-        local mw = tonumber(config.minimapW) or 0
-        local mh = tonumber(config.minimapH) or 0
+        local mx = tonumber(cfg.minimapX) or 0
+        local my = tonumber(cfg.minimapY) or 0
+        local mw = tonumber(cfg.minimapW) or 0
+        local mh = tonumber(cfg.minimapH) or 0
         if mw > 0 and mh > 0 then
-            Isaac.RenderText("[NO SPRITE]", mx+4, my+4, 1, 0, 0, 1)
+            Isaac.RenderText("Map", mx+4, my+4, 1, 0, 0, 1)
             for i=0,mw,32 do
                 Isaac.RenderText("-", mx+i, my, 1, 0, 0, 1)
                 Isaac.RenderText("-", mx+i, my+mh-8, 1, 0, 0, 1)
@@ -575,313 +563,76 @@ end
 
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_RENDER, ExtraHUD.PostRender)
 
+
 local configMenuRegistered = false
-local mcmActiveSetting = nil -- Track which MCM setting is active for overlay
 
-local function RegisterConfigMenu()
-    if configMenuRegistered then return end  -- Prevent duplicate registration
-    configMenuRegistered = true
+-- MCM logic is now in MCM.lua
 
-    if not ModConfigMenu then
-        print("[CoopExtraHUD] MCM not found; skipping menu")
-        return
+-- MCM integration
+local MCM = require("MCM")
+
+
+
+-- Ensure config and configPresets are initialized before MCM.Init
+
+-- Robust config/configPresets initialization and loading
+if not config then config = {} end
+if not configPresets then configPresets = {} end
+
+-- Fill missing config keys from defaultConfig
+for k, v in pairs(defaultConfig) do
+    if config[k] == nil then config[k] = v end
+end
+
+-- Fill missing configPresets keys from defaultConfigPresets
+for mode, preset in pairs(defaultConfigPresets) do
+    if configPresets[mode] == nil then configPresets[mode] = {} end
+    for k, v in pairs(preset) do
+        if configPresets[mode][k] == nil then configPresets[mode][k] = v end
     end
+end
 
-    local MOD = "CoopExtraHUD"
+if not SaveConfig then SaveConfig = function() end end
+if not LoadConfig then LoadConfig = function() end end
+if not UpdateCurrentPreset then UpdateCurrentPreset = function() end end
 
-    -- Presets Category
-    ModConfigMenu.AddSpace(MOD, "Presets")
-    ModConfigMenu.AddTitle(MOD, "Presets", "Preset Options")
-
-    ModConfigMenu.AddSetting(MOD, "Presets", {
-        Type = ModConfigMenu.OptionType.BOOLEAN,
-        CurrentSetting = function() return config.hudMode end,
-        Display = function() return "HUD Mode: " .. (config.hudMode and "Vanilla+" or "Updated") end,
-        OnChange = function(v)
-            config.hudMode = v
-            -- Apply preset values when toggled
-            local preset = configPresets[v]
-            if preset then
-                for k, val in pairs(preset) do
-                    config[k] = val
-                end
-            end
-            SaveConfig()
-        end,
-    })
-
-    -- Add reset to defaults option as a boolean toggle (workaround for no BUTTON type)
-    local resetFlag = false
-    ModConfigMenu.AddSetting(MOD, "Presets", {
-        Type = ModConfigMenu.OptionType.BOOLEAN,
-        CurrentSetting = function() return resetFlag end,
-        Display = function() return "Reset Current Preset to Defaults" end,
-        OnChange = function(v)
-            if v then
-                local defaults = {
-                    [false] = { scale = 0.4, xSpacing = 5, ySpacing = 5, dividerOffset = -20, dividerYOffset = 0, xOffset = 10, yOffset = -10, opacity = 0.8 },
-                    [true]  = { scale = 0.6, xSpacing = 8, ySpacing = 8, dividerOffset = -16, dividerYOffset = 0, xOffset = 32, yOffset = 32, opacity = 0.85 }
-                }
-                local mode = config.hudMode
-                for k, v in pairs(defaults[mode]) do
-                    configPresets[mode][k] = v
-                    config[k] = v
-                end
-                UpdateCurrentPreset()
-                SaveConfig()
-                resetFlag = false -- immediately reset toggle
-            end
-        end,
-    })
-
-    -- Display Category (renamed from Display Options)
-    local addNum = function(name, cur, disp, min, max, step, onchg)
-        ModConfigMenu.AddSetting(MOD, "Display", {
-            Type = ModConfigMenu.OptionType.NUMBER,
-            CurrentSetting = cur, Display = disp, OnChange = onchg,
-            Minimum = min, Maximum = max, Step = step,
-        })
+-- Load config from disk on mod load (before MCM.Init)
+if ExtraHUD and ExtraHUD.HasData and ExtraHUD:HasData() then
+    local data = ExtraHUD:LoadData()
+    local all = DeserializeAllConfigs(data)
+    if all and all.config then
+        for k, v in pairs(all.config) do config[k] = v end
     end
-
-    ModConfigMenu.AddSpace(MOD, "Display")
-    ModConfigMenu.AddTitle(MOD, "Display", "Display")
-
-    -- Scale and Opacity at the top
-    addNum("scale", function() return math.floor(config.scale * 100) end,
-        function() return "HUD Scale: " .. math.floor(config.scale * 100) .. "%" end,
-        20, 100, 5, function(v) config.scale = v / 100; UpdateCurrentPreset(); SaveConfig() end)
-    addNum("opacity", function() return math.floor(config.opacity * 100) end,
-        function() return "HUD Opacity: " .. math.floor(config.opacity * 100) .. "%" end,
-        0, 100, 5, function(v) config.opacity = v / 100; UpdateCurrentPreset(); SaveConfig() end)
-
-    -- Spacing section
-    ModConfigMenu.AddTitle(MOD, "Display", "Spacing")
-    addNum("xSpacing", function() return config.xSpacing end,
-        function() return "X Spacing: " .. config.xSpacing end,
-        0, 50, 1, function(v) config.xSpacing = v; UpdateCurrentPreset(); SaveConfig() end)
-    addNum("ySpacing", function() return config.ySpacing end,
-        function() return "Y Spacing: " .. config.ySpacing end,
-        0, 50, 1, function(v) config.ySpacing = v; UpdateCurrentPreset(); SaveConfig() end)
-
-    -- Divider section
-    ModConfigMenu.AddTitle(MOD, "Display", "Divider")
-    addNum("dividerOffset", function() return config.dividerOffset end,
-        function() return "Divider X Offset: " .. config.dividerOffset end,
-        -200, 200, 5, function(v) config.dividerOffset = v; UpdateCurrentPreset(); SaveConfig() end)
-    addNum("dividerYOffset", function() return config.dividerYOffset end,
-        function() return "Divider Y Offset: " .. config.dividerYOffset end,
-        -200, 200, 5, function(v) config.dividerYOffset = v; UpdateCurrentPreset(); SaveConfig() end)
-
-    -- Offset section
-    ModConfigMenu.AddTitle(MOD, "Display", "Offset")
-    addNum("xOffset", function() return config.xOffset end,
-        function() return "HUD X Offset: " .. config.xOffset end,
-        -200, 200, 5, function(v) config.xOffset = v; UpdateCurrentPreset(); SaveConfig() end)
-    addNum("yOffset", function() return config.yOffset end,
-        function() return "HUD Y Offset: " .. config.yOffset end,
-        -200, 200, 5, function(v) config.yOffset = v; UpdateCurrentPreset(); SaveConfig() end)
-
-    -- HUD Boundary section
-    ModConfigMenu.AddSpace(MOD, "Display")
-    ModConfigMenu.AddTitle(MOD, "Display", "HUD Boundary")
-    -- Fallback overlay option for users with MCM callback issues
-    ModConfigMenu.AddSetting(MOD, "Display", {
-        Type = ModConfigMenu.OptionType.BOOLEAN,
-        CurrentSetting = function() return config.alwaysShowOverlayInMCM or false end,
-        Display = function() return "Always Show Overlays in MCM (Fallback): " .. ((config.alwaysShowOverlayInMCM and "On") or "Off") end,
-        OnChange = function(v) config.alwaysShowOverlayInMCM = v; SaveConfig() end,
-    })
-    ModConfigMenu.AddSetting(MOD, "Display", {
-        Type = ModConfigMenu.OptionType.NUMBER,
-        CurrentSetting = function() return config.boundaryX end,
-        Display = function() return "Boundary X: " .. config.boundaryX end,
-        OnChange = function(v)
-            config.boundaryX = v; UpdateCurrentPreset(); SaveConfig();
-            currentOverlayType = "boundary"
-        end,
-        Minimum = 0, Maximum = 3840, Step = 1,
-        OnUpdate = function()
-            AddDebugLog("[MCM] OnUpdate: boundaryX (setting mcmActiveSetting = 'boundary')")
-            mcmActiveSetting = "boundary"
-        end,
-        OnLeave = function()
-            AddDebugLog("[MCM] OnLeave: boundaryX (clearing mcmActiveSetting if 'boundary')")
-            if mcmActiveSetting == "boundary" then mcmActiveSetting = nil end
-        end,
-    })
-    ModConfigMenu.AddSetting(MOD, "Display", {
-        Type = ModConfigMenu.OptionType.NUMBER,
-        CurrentSetting = function() return config.boundaryY end,
-        Display = function() return "Boundary Y: " .. config.boundaryY end,
-        OnChange = function(v)
-            config.boundaryY = v; UpdateCurrentPreset(); SaveConfig();
-            currentOverlayType = "boundary"
-        end,
-        Minimum = 0, Maximum = 2160, Step = 1,
-        OnUpdate = function()
-            AddDebugLog("[MCM] OnUpdate: boundaryY (setting mcmActiveSetting = 'boundary')")
-            mcmActiveSetting = "boundary"
-        end,
-        OnLeave = function()
-            AddDebugLog("[MCM] OnLeave: boundaryY (clearing mcmActiveSetting if 'boundary')")
-            if mcmActiveSetting == "boundary" then mcmActiveSetting = nil end
-        end,
-    })
-    ModConfigMenu.AddSetting(MOD, "Display", {
-        Type = ModConfigMenu.OptionType.NUMBER,
-        CurrentSetting = function() return config.boundaryW end,
-        Display = function() return "Boundary Width: " .. config.boundaryW end,
-        OnChange = function(v)
-            config.boundaryW = v; UpdateCurrentPreset(); SaveConfig();
-            currentOverlayType = "boundary"
-        end,
-        Minimum = 32, Maximum = 3840, Step = 1,
-        OnUpdate = function()
-            AddDebugLog("[MCM] OnUpdate: boundaryW (setting mcmActiveSetting = 'boundary')")
-            mcmActiveSetting = "boundary"
-        end,
-        OnLeave = function()
-            AddDebugLog("[MCM] OnLeave: boundaryW (clearing mcmActiveSetting if 'boundary')")
-            if mcmActiveSetting == "boundary" then mcmActiveSetting = nil end
-        end,
-    })
-    ModConfigMenu.AddSetting(MOD, "Display", {
-        Type = ModConfigMenu.OptionType.NUMBER,
-        CurrentSetting = function() return config.boundaryH end,
-        Display = function() return "Boundary Height: " .. config.boundaryH end,
-        OnChange = function(v)
-            config.boundaryH = v; UpdateCurrentPreset(); SaveConfig();
-            currentOverlayType = "boundary"
-        end,
-        Minimum = 32, Maximum = 2160, Step = 1,
-        OnUpdate = function()
-            AddDebugLog("[MCM] OnUpdate: boundaryH (setting mcmActiveSetting = 'boundary')")
-            mcmActiveSetting = "boundary"
-        end,
-        OnLeave = function()
-            AddDebugLog("[MCM] OnLeave: boundaryH (clearing mcmActiveSetting if 'boundary')")
-            if mcmActiveSetting == "boundary" then mcmActiveSetting = nil end
-        end,
-    })
-    -- Minimap Avoidance section
-    ModConfigMenu.AddSpace(MOD, "Display")
-    ModConfigMenu.AddTitle(MOD, "Display", "Minimap Avoidance Area")
-    -- Add auto-align as a button-like toggle (like resetFlag)
-    local minimapAutoAlignFlag = false
-    ModConfigMenu.AddSetting(MOD, "Display", {
-        Type = ModConfigMenu.OptionType.BOOLEAN,
-        CurrentSetting = function() return minimapAutoAlignFlag end,
-        Display = function() return "Auto-Align Minimap (Top-Right)" end,
-        OnChange = function(v)
-            if v then
-                config.minimapX = -1
-                config.minimapY = -1
-                UpdateCurrentPreset()
-                SaveConfig()
-                minimapAutoAlignFlag = false -- immediately reset toggle
-            end
-        end,
-    })
-    ModConfigMenu.AddSetting(MOD, "Display", {
-        Type = ModConfigMenu.OptionType.NUMBER,
-        CurrentSetting = function() return config.minimapX end,
-        Display = function() return "Minimap X: " .. config.minimapX end,
-        OnChange = function(v)
-            config.minimapX = v; UpdateCurrentPreset(); SaveConfig();
-            currentOverlayType = "minimap"
-        end,
-        Minimum = 0, Maximum = 3840, Step = 1,
-        OnUpdate = function()
-            AddDebugLog("[MCM] OnUpdate: minimapX (setting mcmActiveSetting = 'minimap')")
-            mcmActiveSetting = "minimap"
-        end,
-        OnLeave = function()
-            AddDebugLog("[MCM] OnLeave: minimapX (clearing mcmActiveSetting if 'minimap')")
-            if mcmActiveSetting == "minimap" then mcmActiveSetting = nil end
-        end,
-    })
-    ModConfigMenu.AddSetting(MOD, "Display", {
-        Type = ModConfigMenu.OptionType.NUMBER,
-        CurrentSetting = function() return config.minimapY end,
-        Display = function() return "Minimap Y: " .. config.minimapY end,
-        OnChange = function(v)
-            config.minimapY = v; UpdateCurrentPreset(); SaveConfig();
-            currentOverlayType = "minimap"
-        end,
-        Minimum = 0, Maximum = 2160, Step = 1,
-        OnUpdate = function()
-            AddDebugLog("[MCM] OnUpdate: minimapY (setting mcmActiveSetting = 'minimap')")
-            mcmActiveSetting = "minimap"
-        end,
-        OnLeave = function()
-            AddDebugLog("[MCM] OnLeave: minimapY (clearing mcmActiveSetting if 'minimap')")
-            if mcmActiveSetting == "minimap" then mcmActiveSetting = nil end
-        end,
-    })
-    ModConfigMenu.AddSetting(MOD, "Display", {
-        Type = ModConfigMenu.OptionType.NUMBER,
-        CurrentSetting = function() return config.minimapW end,
-        Display = function() return "Minimap Width: " .. config.minimapW end,
-        OnChange = function(v)
-            config.minimapW = v; UpdateCurrentPreset(); SaveConfig();
-            currentOverlayType = "minimap"
-        end,
-        Minimum = 0, Maximum = 3840, Step = 1,
-        OnUpdate = function()
-            AddDebugLog("[MCM] OnUpdate: minimapW (setting mcmActiveSetting = 'minimap')")
-            mcmActiveSetting = "minimap"
-        end,
-        OnLeave = function()
-            AddDebugLog("[MCM] OnLeave: minimapW (clearing mcmActiveSetting if 'minimap')")
-            if mcmActiveSetting == "minimap" then mcmActiveSetting = nil end
-        end,
-    })
-    ModConfigMenu.AddSetting(MOD, "Display", {
-        Type = ModConfigMenu.OptionType.NUMBER,
-        CurrentSetting = function() return config.minimapH end,
-        Display = function() return "Minimap Height: " .. config.minimapH end,
-        OnChange = function(v)
-            config.minimapH = v; UpdateCurrentPreset(); SaveConfig();
-            currentOverlayType = "minimap"
-        end,
-        Minimum = 0, Maximum = 2160, Step = 1,
-        OnUpdate = function()
-            AddDebugLog("[MCM] OnUpdate: minimapH (setting mcmActiveSetting = 'minimap')")
-            mcmActiveSetting = "minimap"
-        end,
-        OnLeave = function()
-            AddDebugLog("[MCM] OnLeave: minimapH (clearing mcmActiveSetting if 'minimap')")
-            if mcmActiveSetting == "minimap" then mcmActiveSetting = nil end
-        end,
-    })
-    -- Debug Category (renamed from Debugging)
-    ModConfigMenu.AddSpace(MOD, "Debug")
-    ModConfigMenu.AddTitle(MOD, "Debug", "Debug")
-    ModConfigMenu.AddSetting(MOD, "Debug", {
-        Type = ModConfigMenu.OptionType.BOOLEAN,
-        CurrentSetting = function() return config.debugOverlay end,
-        Display = function() return "Debug Overlay: " .. (config.debugOverlay and "On" or "Off") end,
-        OnChange = function(v) config.debugOverlay = v; UpdateCurrentPreset(); SaveConfig() end,
-    })
-
-    print("[CoopExtraHUD] Config menu registered.")
+    if all and all.preset_false then
+        for k, v in pairs(all.preset_false) do configPresets[false][k] = v end
+    end
+    if all and all.preset_true then
+        for k, v in pairs(all.preset_true) do configPresets[true][k] = v end
+    end
 end
 
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
-    LoadConfig()
-    RegisterConfigMenu()
+    -- Pass config tables/functions to MCM
+    local mcmTables = MCM.Init({
+        ExtraHUD = ExtraHUD,
+        config = config,
+        configPresets = configPresets,
+        SaveConfig = SaveConfig,
+        LoadConfig = LoadConfig,
+        UpdateCurrentPreset = UpdateCurrentPreset,
+    })
+    config = mcmTables.config
+    configPresets = mcmTables.configPresets
+    SaveConfig = mcmTables.SaveConfig
+    LoadConfig = mcmTables.LoadConfig
+    UpdateCurrentPreset = mcmTables.UpdateCurrentPreset
+    MCM.RegisterConfigMenu()
 end)
 
 ExtraHUD:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, function()
     SaveConfig()
 end)
 
--- Debug print flag
-local DEBUG_PRINT = config.debugOverlay
 
--- Replace print statements with debug flag
-local function DebugPrint(msg)
-    if DEBUG_PRINT then print(msg) end
-end
 
 print("[CoopExtraHUD] Fully loaded with HUD mode support and configurable spacing and boundary!")
