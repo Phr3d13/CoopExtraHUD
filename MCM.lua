@@ -55,6 +55,8 @@ function M.RegisterConfigMenu()
                 end
             end
             SaveConfig()
+            -- Invalidate caches so HUD updates immediately
+            if ExtraHUD and ExtraHUD.MarkHudDirty then ExtraHUD.MarkHudDirty() end
         end,
     })
 
@@ -78,6 +80,8 @@ function M.RegisterConfigMenu()
                 UpdateCurrentPreset()
                 SaveConfig()
                 resetFlag = false -- immediately reset toggle
+                -- Invalidate caches so HUD updates immediately
+                if ExtraHUD and ExtraHUD.MarkHudDirty then ExtraHUD.MarkHudDirty() end
             end
         end,
     })
@@ -86,7 +90,12 @@ function M.RegisterConfigMenu()
     local addNum = function(name, cur, disp, min, max, step, onchg)
         ModConfigMenu.AddSetting(MOD, "Display", {
             Type = ModConfigMenu.OptionType.NUMBER,
-            CurrentSetting = cur, Display = disp, OnChange = onchg,
+            CurrentSetting = cur, Display = disp, 
+            OnChange = function(v) 
+                onchg(v)
+                -- Invalidate caches so HUD updates immediately
+                if ExtraHUD and ExtraHUD.MarkHudDirty then ExtraHUD.MarkHudDirty() end
+            end,
             Minimum = min, Maximum = max, Step = step,
         })
     end
@@ -260,6 +269,8 @@ function M.RegisterConfigMenu()
                 if ExtraHUD then
                     ExtraHUD.MCMCompat_displayingOverlay = "boundary"
                     ExtraHUD.MCMCompat_selectedOverlay = "boundary"
+                    -- Invalidate caches so overlay updates immediately
+                    if ExtraHUD.MarkHudDirty then ExtraHUD.MarkHudDirty() end
                 end
             end,
             OnSelect = function(...)
@@ -317,6 +328,8 @@ function M.RegisterConfigMenu()
                 if ExtraHUD then
                     ExtraHUD.MCMCompat_displayingOverlay = "minimap"
                     ExtraHUD.MCMCompat_selectedOverlay = "minimap"
+                    -- Invalidate caches so overlay updates immediately
+                    if ExtraHUD.MarkHudDirty then ExtraHUD.MarkHudDirty() end
                 end
             end,
             OnSelect = function(...)

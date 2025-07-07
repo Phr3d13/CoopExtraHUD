@@ -61,11 +61,11 @@ defaultConfigPresets[true] = { -- Vanilla+
 }
 
 local ICON_SIZE = 32
-local COLUMNS = 2
 local INTER_PLAYER_SPACING = 12
 
--- Sprite cache for item icons
+-- Sprite cache for item icons with cleanup tracking
 local itemSpriteCache = {}
+local spriteUsageTracker = {} -- Track which sprites are currently in use
 
 -- Helper to get or create a cached sprite for a collectible
 local function GetItemSprite(itemId, gfxFile)
@@ -78,16 +78,37 @@ local function GetItemSprite(itemId, gfxFile)
         spr:SetFrame(0)
         itemSpriteCache[itemId] = spr
     end
+    -- Mark this sprite as recently used
+    spriteUsageTracker[itemId] = true
     return itemSpriteCache[itemId]
 end
 
--- Cached sprite for collectibles
-local itemSprite = Sprite()
-itemSprite:Load("gfx/005.100_collectible.anm2", true)
+-- Clean up unused sprites to prevent memory leaks
+local function CleanupUnusedSprites()
+    -- Get all currently owned items across all players
+    local ownedItems = {}
+    local game = Game()
+    for i = 0, game:GetNumPlayers() - 1 do
+        local player = Isaac.GetPlayer(i)
+        for id = 1, CollectibleType.NUM_COLLECTIBLES - 1 do
+            if player:HasCollectible(id) then
+                ownedItems[id] = true
+            end
+        end
+    end
+    
+    -- Remove sprites for items no longer owned by any player
+    for itemId, _ in pairs(itemSpriteCache) do
+        if not ownedItems[itemId] then
+            itemSpriteCache[itemId] = nil
+            spriteUsageTracker[itemId] = nil
+        end
+    end
+end
 
 -- Simple direct tracking of player collectibles
 local playerTrackedCollectibles = {}
--- New: Track pickup order per player
+-- Track pickup order per player
 local playerPickupOrder = {}
 
 -- Debug log table and function (must be defined before any usage)
@@ -104,14 +125,39 @@ local cachedPlayerIconData = nil
 local cachedPlayerCount = 0
 local hudDirty = true
 
+-- Layout cache to avoid recalculating every frame
+local cachedLayout = {
+    playerColumns = {},
+    blockWidths = {},
+    totalWidth = 0,
+    totalHeight = 0,
+    maxRows = 1,
+    scale = 1,
+    startX = 0,
+    startY = 0,
+    valid = false
+}
+
 local function MarkHudDirty()
     hudDirty = true
+    cachedLayout.valid = false
+    -- Also clear config cache to pick up new values immediately
+    cachedClampedConfig = nil
+    -- Force screen size cache to refresh so config changes are picked up
+    lastScreenW, lastScreenH = 0, 0
 end
+
+-- Expose MarkHudDirty for MCM to call when config changes
+ExtraHUD.MarkHudDirty = MarkHudDirty
 
 local function UpdatePlayerIconData()
     local game = Game()
     local totalPlayers = game:GetNumPlayers()
     cachedPlayerIconData = {}
+    
+    -- Clear sprite usage tracker before building new data
+    spriteUsageTracker = {}
+    
     for i = 0, totalPlayers - 1 do
         cachedPlayerIconData[i + 1] = {}
         local player = Isaac.GetPlayer(i)
@@ -137,6 +183,9 @@ local function UpdatePlayerIconData()
     end
     cachedPlayerCount = totalPlayers
     hudDirty = false
+    
+    -- Clean up unused sprites after updating player data
+    CleanupUnusedSprites()
 end
 
 -- Helper: record all current collectibles for all players (e.g. at game start or new player join)
@@ -157,6 +206,9 @@ end
 -- On game start, track all current collectibles and pickup order
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
     TrackAllCurrentCollectibles()
+    -- Clear sprite cache on new game to prevent memory buildup
+    itemSpriteCache = {}
+    spriteUsageTracker = {}
     MarkHudDirty()
 end)
 
@@ -230,13 +282,13 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_PICKUP_UPDATE, function(_, pickup)
 end)
 
 
--- Config serialization
+-- Config serialization (optimized with table.concat)
 local function SerializeConfig(tbl)
-    local str = ""
+    local parts = {}
     for k, v in pairs(tbl) do
-        str = str .. k .. "=" .. tostring(v) .. ";"
+        table.insert(parts, k .. "=" .. tostring(v) .. ";")
     end
-    return str
+    return table.concat(parts)
 end
 
 local function DeserializeConfig(data)
@@ -251,6 +303,9 @@ local function DeserializeConfig(data)
 end
 
 local function SerializeAllConfigs()
+    if not config or not configPresets or not configPresets[false] or not configPresets[true] then
+        return ""
+    end
     local str = "[config]" .. SerializeConfig(config) .. "[preset_false]" .. SerializeConfig(configPresets[false]) .. "[preset_true]" .. SerializeConfig(configPresets[true])
     return str
 end
@@ -270,6 +325,9 @@ end
 local function SaveConfig()
     if config then
         ExtraHUD:SaveData(SerializeAllConfigs())
+        -- Clear caches when config changes
+        cachedClampedConfig = nil
+        MarkHudDirty()
     end
 end
 
@@ -277,9 +335,15 @@ local function LoadConfig()
     if ExtraHUD:HasData() then
         local data = ExtraHUD:LoadData()
         local all = DeserializeAllConfigs(data)
-        for k, v in pairs(all.config or {}) do config[k] = v end
-        for k, v in pairs(all.preset_false or {}) do configPresets[false][k] = v end
-        for k, v in pairs(all.preset_true or {}) do configPresets[true][k] = v end
+        if all and all.config and config then
+            for k, v in pairs(all.config) do config[k] = v end
+        end
+        if all and all.preset_false and configPresets and configPresets[false] then
+            for k, v in pairs(all.preset_false) do configPresets[false][k] = v end
+        end
+        if all and all.preset_true and configPresets and configPresets[true] then
+            for k, v in pairs(all.preset_true) do configPresets[true][k] = v end
+        end
     end
 end
 
@@ -316,53 +380,146 @@ local function GetMiniMapiBounds()
     return { x = pos.X, y = pos.Y, w = size.X, h = size.Y }
 end
 
-
-
-
-
-
-
-
-
 -- Dual-flag overlay logic (set by MCM.lua)
 ExtraHUD.MCMCompat_displayingOverlay = ""
 ExtraHUD.MCMCompat_selectedOverlay = ""
 
+-- Sprite-based overlay system (following MCM exact implementation)
+local function GetMenuAnm2Sprite(animation, frame)
+    local sprite = Sprite()
+    sprite:Load("gfx/ui/coopextrahud/overlay.anm2", true)
+    sprite:SetFrame(animation, frame)
+    return sprite
+end
+
+-- Optimized column calculation
+local function getPlayerColumns(itemCount)
+    local maxCols = 4
+    local cols = math.ceil(itemCount / 8)
+    return math.max(1, math.min(cols, maxCols))
+end
+
+-- Calculate and cache layout (only when dirty)
+local function UpdateLayout(playerIconData, cfg, screenW, screenH)
+    if cachedLayout.valid then return cachedLayout end
+    
+    -- Calculate columns and max rows needed
+    local maxRows = 1
+    local playerColumns = {}
+    
+    for i, items in ipairs(playerIconData) do
+        local itemCount = #items
+        local cols = getPlayerColumns(itemCount)
+        playerColumns[i] = cols
+        local rows = math.ceil(itemCount / cols)
+        maxRows = math.max(maxRows, rows)
+    end
+    
+    local rawScale = cfg.scale
+    local maxHeight = maxRows * (ICON_SIZE + cfg.ySpacing) - cfg.ySpacing
+    local scale = rawScale
+    
+    if not cfg.hudMode then
+        -- Scale down if HUD would exceed 80% of screen height
+        if maxHeight * rawScale > screenH * 0.8 then
+            scale = (screenH * 0.8) / maxHeight
+            scale = math.min(scale, rawScale)
+        end
+    end
+    
+    -- Calculate block width per player
+    local blockWidths = {}
+    for i, items in ipairs(playerIconData) do
+        local cols = playerColumns[i]
+        blockWidths[i] = (ICON_SIZE * cols * scale) + ((cols - 1) * cfg.xSpacing * scale)
+    end
+    
+    local totalWidth = 0
+    for i = 1, #blockWidths do
+        totalWidth = totalWidth + blockWidths[i]
+    end
+    totalWidth = totalWidth + (#blockWidths - 1) * INTER_PLAYER_SPACING * scale
+    local totalHeight = maxHeight * scale
+    
+    -- Calculate start position
+    local startX, startY
+    if cfg.hudMode then
+        startX = cfg.boundaryX + cfg.boundaryW - totalWidth + cfg.xOffset
+        startY = cfg.boundaryY + cfg.yOffset
+    else
+        startX = cfg.boundaryX + cfg.boundaryW - totalWidth + cfg.xOffset
+        startY = cfg.boundaryY + ((cfg.boundaryH - totalHeight) / 2) + cfg.yOffset
+    end
+    
+    -- Cache the results
+    cachedLayout.playerColumns = playerColumns
+    cachedLayout.blockWidths = blockWidths
+    cachedLayout.totalWidth = totalWidth
+    cachedLayout.totalHeight = totalHeight
+    cachedLayout.maxRows = maxRows
+    cachedLayout.scale = scale
+    cachedLayout.startX = startX
+    cachedLayout.startY = startY
+    cachedLayout.valid = true
+    
+    return cachedLayout
+end
+
+-- Cache for clamped config values
+local cachedClampedConfig = nil
+local lastScreenW, lastScreenH = 0, 0
+
+-- Clamp config values only when screen size changes
+local function GetClampedConfig(cfg, screenW, screenH)
+    if cachedClampedConfig and lastScreenW == screenW and lastScreenH == screenH then
+        return cachedClampedConfig
+    end
+    
+    local clamped = {}
+    -- Copy and clamp all values
+    for k, v in pairs(cfg) do clamped[k] = v end
+    
+    -- Clamp boundary to screen size
+    clamped.boundaryW = math.max(32, math.min(clamped.boundaryW or screenW, screenW))
+    clamped.boundaryH = math.max(32, math.min(clamped.boundaryH or screenH, screenH))
+    clamped.boundaryX = math.max(0, math.min(clamped.boundaryX or 0, screenW - 1))
+    clamped.boundaryY = math.max(0, math.min(clamped.boundaryY or 0, screenH - 1))
+    
+    -- Clamp minimap area to screen
+    clamped.minimapW = math.max(0, math.min(clamped.minimapW or 0, screenW))
+    clamped.minimapH = math.max(0, math.min(clamped.minimapH or 0, screenH))
+    clamped.minimapX = math.max(0, math.min(clamped.minimapX or 0, screenW - 1))
+    clamped.minimapY = math.max(0, math.min(clamped.minimapY or 0, screenH - 1))
+    
+    -- Ensure other values have defaults
+    clamped.minimapPadding = clamped.minimapPadding or 0
+    clamped.xOffset = clamped.xOffset or 0
+    clamped.yOffset = clamped.yOffset or 0
+    clamped.scale = clamped.scale or 1
+    clamped.opacity = clamped.opacity or 1
+    clamped.xSpacing = clamped.xSpacing or 0
+    clamped.ySpacing = clamped.ySpacing or 0
+    clamped.dividerOffset = clamped.dividerOffset or 0
+    clamped.dividerYOffset = clamped.dividerYOffset or 0
+    
+    cachedClampedConfig = clamped
+    lastScreenW, lastScreenH = screenW, screenH
+    return clamped
+end
+
+-- Overlay sprites (created once and reused, MCM-style)
+local HudOffsetVisualTopLeft = GetMenuAnm2Sprite("Offset", 0)
+local HudOffsetVisualTopRight = GetMenuAnm2Sprite("Offset", 1) 
+local HudOffsetVisualBottomRight = GetMenuAnm2Sprite("Offset", 2)
+local HudOffsetVisualBottomLeft = GetMenuAnm2Sprite("Offset", 3)
+
 function ExtraHUD:PostRender()
     local game = Game()
     local screenW, screenH = Isaac.GetScreenWidth(), Isaac.GetScreenHeight()
-    -- Defensive: ensure all config values are not nil before use
-    local cfg = getConfig()
-    cfg.boundaryX = cfg.boundaryX or 0
-    cfg.boundaryY = cfg.boundaryY or 0
-    cfg.boundaryW = cfg.boundaryW or screenW
-    cfg.boundaryH = cfg.boundaryH or screenH
-    cfg.minimapX = cfg.minimapX or 0
-    cfg.minimapY = cfg.minimapY or 0
-    cfg.minimapW = cfg.minimapW or 0
-    cfg.minimapH = cfg.minimapH or 0
-    cfg.minimapPadding = cfg.minimapPadding or 0
-    cfg.xOffset = cfg.xOffset or 0
-    cfg.yOffset = cfg.yOffset or 0
-    cfg.scale = cfg.scale or 1
-    cfg.opacity = cfg.opacity or 1
-    cfg.xSpacing = cfg.xSpacing or 0
-    cfg.ySpacing = cfg.ySpacing or 0
-    cfg.dividerOffset = cfg.dividerOffset or 0
-    cfg.dividerYOffset = cfg.dividerYOffset or 0
-    -- Clamp boundary to screen size (allow full range)
-    cfg.boundaryW = math.max(32, math.min(cfg.boundaryW, screenW))
-    cfg.boundaryH = math.max(32, math.min(cfg.boundaryH, screenH))
-    cfg.boundaryX = math.max(0, math.min(cfg.boundaryX, screenW - 1))
-    cfg.boundaryY = math.max(0, math.min(cfg.boundaryY, screenH - 1))
-    -- Clamp minimap area to screen
-    cfg.minimapW = math.max(0, math.min(cfg.minimapW, screenW))
-    cfg.minimapH = math.max(0, math.min(cfg.minimapH, screenH))
-    cfg.minimapX = math.max(0, math.min(cfg.minimapX, screenW - 1))
-    cfg.minimapY = math.max(0, math.min(cfg.minimapY, screenH - 1))
-    local hudVisible = game:GetHUD():IsVisible()
-    local isPaused = game:IsPaused()
-    local yMapOffset = (not hudVisible and isPaused) and cfg.mapYOffset or 0
+    
+    -- Get clamped config (cached when screen size doesn't change)
+    local cfg = GetClampedConfig(getConfig(), screenW, screenH)
+    
     -- Only update player icon data cache if dirty or player count changed
     local totalPlayers = game:GetNumPlayers()
     if hudDirty or not cachedPlayerIconData or cachedPlayerCount ~= totalPlayers then
@@ -370,120 +527,55 @@ function ExtraHUD:PostRender()
     end
     local playerIconData = cachedPlayerIconData
     if not playerIconData then return end
-    -- Layout calculations (always recalculate every frame for boundary clamp)
-local function getPlayerColumns(itemCount)
-    local maxCols = 4
-    -- Calculate columns by dividing itemCount by 8, rounding up, capped at maxCols
-    local cols = math.ceil(itemCount / 8)
-    if cols > maxCols then
-        cols = maxCols
-    elseif cols < 1 then
-        cols = 1
-    end
-    return cols
-end
-
-local maxRows = 1
-local playerColumns = {}
-
--- Calculate columns and max rows needed
-for i, items in ipairs(playerIconData) do
-    local itemCount = #items
-    local cols = getPlayerColumns(itemCount)
-    playerColumns[i] = cols
-    local rows = math.ceil(itemCount / cols)
-    maxRows = math.max(maxRows, rows)
-end
-
-local rawScale = cfg.scale
-
--- Calculate max height with current columns before scaling
-local maxHeight = maxRows * (ICON_SIZE + cfg.ySpacing) - cfg.ySpacing
-
-local scale = rawScale
-
-if not cfg.hudMode then
-    -- Scale down if HUD would exceed 80% of screen height
-    if maxHeight * rawScale > screenH * 0.8 then
-        scale = (screenH * 0.8) / maxHeight
-        scale = math.min(scale, rawScale)
-    end
-end
-    -- Calculate block width per player
-    local blockWs = {}
-    for i, items in ipairs(playerIconData) do
-        local cols = playerColumns[i]
-        blockWs[i] = (ICON_SIZE * cols * scale) + ((cols - 1) * cfg.xSpacing * scale)
-    end
-    local totalW = 0
-    for i = 1, #blockWs do
-        totalW = totalW + blockWs[i]
-    end
-    totalW = totalW + (#blockWs - 1) * INTER_PLAYER_SPACING * scale
-    local totalH = maxHeight * scale
-    -- Improved boundary anchoring logic
-    local startX, startY
-    if cfg.hudMode then
-        -- Vanilla+: anchor to top-right of boundary, plus offsets
-        startX = cfg.boundaryX + cfg.boundaryW - totalW + cfg.xOffset
-        startY = cfg.boundaryY + cfg.yOffset
-    else
-        -- Updated: center vertically in boundary, right-aligned
-        startX = cfg.boundaryX + cfg.boundaryW - totalW + cfg.xOffset
-        startY = cfg.boundaryY + ((cfg.boundaryH - totalH) / 2) + cfg.yOffset
-    end
-    -- Minimap avoidance: if HUD would overlap minimap area, move HUD below minimap (with padding)
-    local minimapX = tonumber(cfg.minimapX) or 0
-    local minimapY = tonumber(cfg.minimapY) or 0
-    local minimapW = tonumber(cfg.minimapW) or 0
-    local minimapH = tonumber(cfg.minimapH) or 0
-    local minimapPadding = tonumber(cfg.minimapPadding) or 0
-    if minimapW > 0 and minimapH > 0 then
-        local hudLeft = startX
-        local hudRight = startX + totalW
-        local hudTop = startY
-        local hudBottom = startY + totalH
-        local miniLeft = minimapX
-        local miniRight = minimapX + minimapW
-        local miniTop = minimapY
-        local miniBottom = minimapY + minimapH
+    
+    -- Get cached layout (only recalculates when dirty)
+    local layout = UpdateLayout(playerIconData, cfg, screenW, screenH)
+    
+    -- Apply minimap avoidance and boundary clamping to start position
+    local startX, startY = layout.startX, layout.startY
+    
+    -- Minimap avoidance (only if minimap is configured)
+    if cfg.minimapW > 0 and cfg.minimapH > 0 then
+        local hudLeft, hudRight = startX, startX + layout.totalWidth
+        local hudTop, hudBottom = startY, startY + layout.totalHeight
+        local miniLeft, miniRight = cfg.minimapX, cfg.minimapX + cfg.minimapW
+        local miniTop, miniBottom = cfg.minimapY, cfg.minimapY + cfg.minimapH
+        
         local overlap = not (hudRight < miniLeft or hudLeft > miniRight or hudBottom < miniTop or hudTop > miniBottom)
         if overlap then
-            startY = miniBottom + minimapPadding
+            startY = miniBottom + cfg.minimapPadding
         end
     end
-    -- Clamp to boundary (prevent going outside)
-    if startX < cfg.boundaryX then startX = cfg.boundaryX end
-    if startY < cfg.boundaryY then startY = cfg.boundaryY end
-    if startX + totalW > cfg.boundaryX + cfg.boundaryW then
-        startX = cfg.boundaryX + cfg.boundaryW - totalW
-    end
-    if startY + totalH > cfg.boundaryY + cfg.boundaryH then
-        startY = cfg.boundaryY + cfg.boundaryH - totalH
-    end
-    -- Draw icons + dividers
+    
+    -- Clamp to boundary
+    startX = math.max(cfg.boundaryX, math.min(startX, cfg.boundaryX + cfg.boundaryW - layout.totalWidth))
+    startY = math.max(cfg.boundaryY, math.min(startY, cfg.boundaryY + cfg.boundaryH - layout.totalHeight))
+    
+    -- Draw icons + dividers using cached layout
     local curX = startX
     for i, items in ipairs(playerIconData) do
-        local cols = playerColumns[i]
-        local blockW = blockWs[i]
+        local cols = layout.playerColumns[i]
+        local blockW = layout.blockWidths[i]
         local rows = math.ceil(#items / cols)
+        
         for idx, itemId in ipairs(items) do
             local row = math.floor((idx - 1) / cols)
             local col = (idx - 1) % cols
-            local x = curX + col * (ICON_SIZE + cfg.xSpacing) * scale
-            local y = startY + row * (ICON_SIZE + cfg.ySpacing) * scale
-            RenderItemIcon(itemId, x, y, scale, cfg.opacity)
+            local x = curX + col * (ICON_SIZE + cfg.xSpacing) * layout.scale
+            local y = startY + row * (ICON_SIZE + cfg.ySpacing) * layout.scale
+            RenderItemIcon(itemId, x, y, layout.scale, cfg.opacity)
         end
+        
         if i < #playerIconData then
-            local dividerX = curX + blockW + (INTER_PLAYER_SPACING * scale) / 2 + cfg.dividerOffset
+            local dividerX = curX + blockW + (INTER_PLAYER_SPACING * layout.scale) / 2 + cfg.dividerOffset
             local lineChar = "|"
-            local dividerStep = ICON_SIZE * 0.375 * scale
-            local lines = math.floor(totalH / dividerStep)
+            local dividerStep = ICON_SIZE * 0.375 * layout.scale
+            local lines = math.floor(layout.totalHeight / dividerStep)
             for l = 0, lines do
-                Isaac.RenderScaledText(lineChar, dividerX, startY + cfg.dividerYOffset + l * dividerStep, scale, scale, 1, 1, 1, cfg.opacity)
+                Isaac.RenderScaledText(lineChar, dividerX, startY + cfg.dividerYOffset + l * dividerStep, layout.scale, layout.scale, 1, 1, 1, cfg.opacity)
             end
         end
-        curX = curX + blockW + INTER_PLAYER_SPACING * scale
+        curX = curX + blockW + INTER_PLAYER_SPACING * layout.scale
     end
     -- Debug overlay: only draw the HUD boundary border, no text or callback names
     if cfg.debugOverlay then
@@ -520,60 +612,72 @@ end
             ExtraHUD.MCMCompat_selectedOverlay = ""
         end
     end
-    -- Draw overlays as needed (text/lines only, sprite code removed)
+    -- Draw overlays as needed (now using proper sprites)
     if showBoundary then
-        local bx = tonumber(cfg.boundaryX) or 0
-        local by = tonumber(cfg.boundaryY) or 0
-        local bw = tonumber(cfg.boundaryW) or 0
-        local bh = tonumber(cfg.boundaryH) or 0
+        -- Use current config directly for overlay rendering to ensure real-time updates
+        local currentConfig = getConfig()
+        local bx = tonumber(currentConfig.boundaryX) or 0
+        local by = tonumber(currentConfig.boundaryY) or 0
+        local bw = tonumber(currentConfig.boundaryW) or 0
+        local bh = tonumber(currentConfig.boundaryH) or 0
         if bw > 0 and bh > 0 then
+            local vecZero = Vector(0, 0)
+            
+            -- Render corner sprites at boundary corners (MCM-style) with nil checks
+            if HudOffsetVisualTopLeft then
+                HudOffsetVisualTopLeft:Render(Vector(bx, by), vecZero, vecZero)
+            end
+            if HudOffsetVisualTopRight then
+                HudOffsetVisualTopRight:Render(Vector(bx + bw - 32, by), vecZero, vecZero)
+            end
+            if HudOffsetVisualBottomLeft then
+                HudOffsetVisualBottomLeft:Render(Vector(bx, by + bh - 32), vecZero, vecZero)
+            end
+            if HudOffsetVisualBottomRight then
+                HudOffsetVisualBottomRight:Render(Vector(bx + bw - 32, by + bh - 32), vecZero, vecZero)
+            end
+            
+            -- Optional: Add text label
             Isaac.RenderText("Boundary", bx+4, by+4, 1, 0, 0, 1)
-            for i=0,bw,32 do
-                Isaac.RenderText("-", bx+i, by, 1, 0, 0, 1)
-                Isaac.RenderText("-", bx+i, by+bh-8, 1, 0, 0, 1)
-            end
-            for j=0,bh,32 do
-                Isaac.RenderText("|", bx, by+j, 1, 0, 0, 1)
-                Isaac.RenderText("|", bx+bw-8, by+j, 1, 0, 0, 1)
-            end
         else
             AddDebugLog("[Overlay] showBoundary: boundary config value(s) nil or zero, skipping overlay")
         end
     elseif showMinimap then
-        local mx = tonumber(cfg.minimapX) or 0
-        local my = tonumber(cfg.minimapY) or 0
-        local mw = tonumber(cfg.minimapW) or 0
-        local mh = tonumber(cfg.minimapH) or 0
+        -- Use current config directly for overlay rendering to ensure real-time updates
+        local currentConfig = getConfig()
+        local mx = tonumber(currentConfig.minimapX) or 0
+        local my = tonumber(currentConfig.minimapY) or 0
+        local mw = tonumber(currentConfig.minimapW) or 0
+        local mh = tonumber(currentConfig.minimapH) or 0
         if mw > 0 and mh > 0 then
+            local vecZero = Vector(0, 0)
+            
+            -- Render corner sprites at minimap area corners (MCM-style) with nil checks
+            if HudOffsetVisualTopLeft then
+                HudOffsetVisualTopLeft:Render(Vector(mx, my), vecZero, vecZero)
+            end
+            if HudOffsetVisualTopRight then
+                HudOffsetVisualTopRight:Render(Vector(mx + mw - 32, my), vecZero, vecZero)
+            end
+            if HudOffsetVisualBottomLeft then
+                HudOffsetVisualBottomLeft:Render(Vector(mx, my + mh - 32), vecZero, vecZero)
+            end
+            if HudOffsetVisualBottomRight then
+                HudOffsetVisualBottomRight:Render(Vector(mx + mw - 32, my + mh - 32), vecZero, vecZero)
+            end
+            
+            -- Optional: Add text label
             Isaac.RenderText("Map", mx+4, my+4, 1, 0, 0, 1)
-            for i=0,mw,32 do
-                Isaac.RenderText("-", mx+i, my, 1, 0, 0, 1)
-                Isaac.RenderText("-", mx+i, my+mh-8, 1, 0, 0, 1)
-            end
-            for j=0,mh,32 do
-                Isaac.RenderText("|", mx, my+j, 1, 0, 0, 1)
-                Isaac.RenderText("|", mx+mw-8, my+j, 1, 0, 0, 1)
-            end
         else
             AddDebugLog("[Overlay] showMinimap: minimap config value(s) nil or zero, skipping overlay")
         end
     end
-    AddDebugLog("Rendered HUD; mapVisible=" .. tostring(hudVisible))
 end
 
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_RENDER, ExtraHUD.PostRender)
 
-
-local configMenuRegistered = false
-
--- MCM logic is now in MCM.lua
-
 -- MCM integration
 local MCM = require("MCM")
-
-
-
--- Ensure config and configPresets are initialized before MCM.Init
 
 -- Robust config/configPresets initialization and loading
 if not config then config = {} end
@@ -592,6 +696,7 @@ for mode, preset in pairs(defaultConfigPresets) do
     end
 end
 
+-- Initialize function placeholders
 if not SaveConfig then SaveConfig = function() end end
 if not LoadConfig then LoadConfig = function() end end
 if not UpdateCurrentPreset then UpdateCurrentPreset = function() end end
