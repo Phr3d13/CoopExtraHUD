@@ -580,19 +580,23 @@ function ExtraHUD:PostRender()
     local minimapH = tonumber(liveCfg.minimapH) or 0
     local minimapPadding = liveCfg.minimapPadding or 0
 
-    -- Apply minimap avoidance and boundary clamping to start position
+    -- Apply minimap avoidance and boundary clamping to start position (always use live config for map area)
     local startX, startY = layout.startX, layout.startY
 
-    -- Minimap avoidance (only if minimap is configured)
-    if minimapW > 0 and minimapH > 0 then
+    -- Minimap avoidance (always use live config for minimap area)
+    local mapX = tonumber(liveCfg.minimapX) or 0
+    local mapY = tonumber(liveCfg.minimapY) or 0
+    local mapW = tonumber(liveCfg.minimapW) or 0
+    local mapH = tonumber(liveCfg.minimapH) or 0
+    local mapPad = liveCfg.minimapPadding or 0
+    if mapW > 0 and mapH > 0 then
         local hudLeft, hudRight = startX, startX + layout.totalWidth
         local hudTop, hudBottom = startY, startY + layout.totalHeight
-        local miniLeft, miniRight = minimapX, minimapX + minimapW
-        local miniTop, miniBottom = minimapY, minimapY + minimapH
-
+        local miniLeft, miniRight = mapX, mapX + mapW
+        local miniTop, miniBottom = mapY, mapY + mapH
         local overlap = not (hudRight < miniLeft or hudLeft > miniRight or hudBottom < miniTop or hudTop > miniBottom)
         if overlap then
-            startY = miniBottom + minimapPadding
+            startY = miniBottom + mapPad
         end
     end
 
@@ -627,7 +631,7 @@ function ExtraHUD:PostRender()
         curX = curX + blockW + INTER_PLAYER_SPACING * layout.scale
     end
     -- Debug overlay: only draw the HUD boundary border, no text or callback names
-    if clampedCfg.debugOverlay then
+    if getConfig().debugOverlay then
         -- Draw a lineart border for the HUD boundary for debug/adjustment (NO TEXT)
         if boundaryW > 0 and boundaryH > 0 then
             for i=0,boundaryW,32 do
@@ -638,6 +642,16 @@ function ExtraHUD:PostRender()
                 Isaac.RenderText("|", boundaryX, boundaryY+j, 1, 1, 1, 1)
                 Isaac.RenderText("|", boundaryX+boundaryW-8, boundaryY+j, 1, 1, 1, 1)
             end
+        end
+        -- Ensure the cache reflects the current state
+        if cachedClampedConfig then
+            cachedClampedConfig.debugOverlay = true
+        end
+    else
+        -- Only force a HUD redraw if the debug overlay was previously on and is now off
+        if cachedClampedConfig and cachedClampedConfig.debugOverlay then
+            cachedClampedConfig.debugOverlay = false
+            MarkHudDirty()
         end
     end
     -- Only show overlays if MCM is open and both Display and Selected flags match
