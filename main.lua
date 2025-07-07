@@ -63,19 +63,49 @@ defaultConfigPresets[true] = { -- Vanilla+
 local ICON_SIZE = 32
 local INTER_PLAYER_SPACING = 12
 
+-- Configuration for modded item support
+local MAX_ITEM_ID = 4000 -- Scan up to item ID 4000 to catch most modded items
+local VANILLA_ITEM_LIMIT = CollectibleType.NUM_COLLECTIBLES - 1
+
+-- Helper function to check if an item exists and is valid
+local function IsValidItem(itemId)
+    local itemConfig = Isaac.GetItemConfig():GetCollectible(itemId)
+    return itemConfig ~= nil and itemConfig.GfxFileName ~= nil and itemConfig.GfxFileName ~= ""
+end
+
+-- Debug log table and function (must be defined before any usage)
+local debugLogs = {}
+local function AddDebugLog(msg)
+    -- Suppress all debug logging to log.txt except for MCM function list (handled separately)
+    table.insert(debugLogs, 1, msg)
+    if #debugLogs > 5 then table.remove(debugLogs) end
+    -- No Isaac.DebugString(msg) here
+end
+
 -- Sprite cache for item icons with cleanup tracking
 local itemSpriteCache = {}
 local spriteUsageTracker = {} -- Track which sprites are currently in use
 
--- Helper to get or create a cached sprite for a collectible
+-- Helper to get or create a cached sprite for a collectible (with modded item support)
 local function GetItemSprite(itemId, gfxFile)
     if not itemSpriteCache[itemId] then
         local spr = Sprite()
-        spr:Load("gfx/005.100_collectible.anm2", true)
-        spr:ReplaceSpritesheet(1, gfxFile)
-        spr:LoadGraphics()
-        spr:Play("Idle", true)
-        spr:SetFrame(0)
+        -- Try to load the sprite, with error handling for modded items
+        local success = pcall(function()
+            spr:Load("gfx/005.100_collectible.anm2", true)
+            spr:ReplaceSpritesheet(1, gfxFile)
+            spr:LoadGraphics()
+            spr:Play("Idle", true)
+            spr:SetFrame(0)
+        end)
+        
+        if not success then
+            -- If loading fails (e.g., missing modded item graphics), create a fallback
+            AddDebugLog("[Sprite] Failed to load graphics for item " .. itemId .. ", using fallback")
+            -- You could return nil here to skip rendering this item, or create a "missing" sprite
+            return nil
+        end
+        
         itemSpriteCache[itemId] = spr
     end
     -- Mark this sprite as recently used
@@ -83,15 +113,15 @@ local function GetItemSprite(itemId, gfxFile)
     return itemSpriteCache[itemId]
 end
 
--- Clean up unused sprites to prevent memory leaks
+-- Clean up unused sprites to prevent memory leaks (updated for modded items)
 local function CleanupUnusedSprites()
-    -- Get all currently owned items across all players
+    -- Get all currently owned items across all players (including modded items)
     local ownedItems = {}
     local game = Game()
     for i = 0, game:GetNumPlayers() - 1 do
         local player = Isaac.GetPlayer(i)
-        for id = 1, CollectibleType.NUM_COLLECTIBLES - 1 do
-            if player:HasCollectible(id) then
+        for id = 1, MAX_ITEM_ID do
+            if player:HasCollectible(id) and IsValidItem(id) then
                 ownedItems[id] = true
             end
         end
@@ -110,15 +140,6 @@ end
 local playerTrackedCollectibles = {}
 -- Track pickup order per player
 local playerPickupOrder = {}
-
--- Debug log table and function (must be defined before any usage)
-local debugLogs = {}
-local function AddDebugLog(msg)
-    -- Suppress all debug logging to log.txt except for MCM function list (handled separately)
-    table.insert(debugLogs, 1, msg)
-    if #debugLogs > 5 then table.remove(debugLogs) end
-    -- No Isaac.DebugString(msg) here
-end
 
 -- HUD cache and update functions (must be defined before any usage)
 local cachedPlayerIconData = nil
@@ -162,11 +183,14 @@ local function UpdatePlayerIconData()
         cachedPlayerIconData[i + 1] = {}
         local player = Isaac.GetPlayer(i)
         local ownedSet = {}
-        for id = 1, CollectibleType.NUM_COLLECTIBLES - 1 do
-            if player:HasCollectible(id) then
+        
+        -- Check both vanilla and modded items
+        for id = 1, MAX_ITEM_ID do
+            if player:HasCollectible(id) and IsValidItem(id) then
                 ownedSet[id] = true
             end
         end
+        
         if playerPickupOrder[i] then
             for _, id in ipairs(playerPickupOrder[i]) do
                 if ownedSet[id] then
@@ -175,7 +199,9 @@ local function UpdatePlayerIconData()
                 end
             end
         end
-        for id = 1, CollectibleType.NUM_COLLECTIBLES - 1 do
+        
+        -- Add any remaining owned items that weren't in the pickup order
+        for id = 1, MAX_ITEM_ID do
             if ownedSet[id] then
                 table.insert(cachedPlayerIconData[i + 1], id)
             end
@@ -194,8 +220,8 @@ local function TrackAllCurrentCollectibles()
         local player = Isaac.GetPlayer(i)
         playerTrackedCollectibles[i] = {}
         playerPickupOrder[i] = {}
-        for id = 1, CollectibleType.NUM_COLLECTIBLES - 1 do
-            if player:HasCollectible(id) then
+        for id = 1, MAX_ITEM_ID do
+            if player:HasCollectible(id) and IsValidItem(id) then
                 playerTrackedCollectibles[i][id] = true
                 table.insert(playerPickupOrder[i], id)
             end
@@ -221,8 +247,8 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
             local player = Isaac.GetPlayer(i)
             playerTrackedCollectibles[i] = {}
             playerPickupOrder[i] = {}
-            for id = 1, CollectibleType.NUM_COLLECTIBLES - 1 do
-                if player:HasCollectible(id) then
+            for id = 1, MAX_ITEM_ID do
+                if player:HasCollectible(id) and IsValidItem(id) then
                     playerTrackedCollectibles[i][id] = true
                     table.insert(playerPickupOrder[i], id)
                 end
@@ -233,16 +259,16 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
     lastPlayerCount = curCount
 end)
 
--- Maintain true pickup order for each player
+-- Maintain true pickup order for each player (with modded item support)
 local function UpdatePickupOrderForAllPlayers()
     local game = Game()
     for i = 0, game:GetNumPlayers() - 1 do
         local player = Isaac.GetPlayer(i)
         playerPickupOrder[i] = playerPickupOrder[i] or {}
         local owned = {}
-        -- Mark all currently owned collectibles
-        for id = 1, CollectibleType.NUM_COLLECTIBLES - 1 do
-            if player:HasCollectible(id) then
+        -- Mark all currently owned collectibles (including modded ones)
+        for id = 1, MAX_ITEM_ID do
+            if player:HasCollectible(id) and IsValidItem(id) then
                 owned[id] = true
                 -- If not already in order, add to end
                 local found = false
@@ -357,11 +383,12 @@ SaveConfig = SaveConfig
 LoadConfig = LoadConfig
 UpdateCurrentPreset = UpdateCurrentPreset
 
--- Render a single item icon (now uses cache)
+-- Render a single item icon (now uses cache with nil checks for modded items)
 local function RenderItemIcon(itemId, x, y, scale, opa)
     local ci = Isaac.GetItemConfig():GetCollectible(itemId)
     if not ci then return end
     local spr = GetItemSprite(itemId, ci.GfxFileName)
+    if not spr then return end -- Skip rendering if sprite failed to load (modded item issue)
     spr.Scale = Vector(scale, scale)
     spr.Color = Color(1, 1, 1, opa)
     spr:Render(Vector(x, y), Vector.Zero, Vector.Zero)
