@@ -171,6 +171,14 @@ end
 -- Expose MarkHudDirty for MCM to call when config changes
 ExtraHUD.MarkHudDirty = MarkHudDirty
 
+function ExtraHUD.OnOverlayAdjusterMoved()
+    -- Invalidate all caches and force HUD/layout update
+    cachedClampedConfig = nil
+    cachedLayout.valid = false
+    lastScreenW, lastScreenH = 0, 0
+    MarkHudDirty()
+end
+
 local function UpdatePlayerIconData()
     local game = Game()
     local totalPlayers = game:GetNumPlayers()
@@ -498,6 +506,7 @@ local lastScreenW, lastScreenH = 0, 0
 
 -- Clamp config values only when screen size changes
 local function GetClampedConfig(cfg, screenW, screenH)
+    -- Always recalculate clamped config if cachedClampedConfig is nil
     if cachedClampedConfig and lastScreenW == screenW and lastScreenH == screenH then
         return cachedClampedConfig
     end
@@ -544,9 +553,11 @@ function ExtraHUD:PostRender()
     local game = Game()
     local screenW, screenH = Isaac.GetScreenWidth(), Isaac.GetScreenHeight()
     
-    -- Get clamped config (cached when screen size doesn't change)
-    local cfg = GetClampedConfig(getConfig(), screenW, screenH)
-    
+    -- Get clamped config (cached when screen size doesn't change) for layout/scaling
+    local clampedCfg = GetClampedConfig(getConfig(), screenW, screenH)
+    -- Always use live config for boundary/minimap positions
+    local liveCfg = getConfig()
+
     -- Only update player icon data cache if dirty or player count changed
     local totalPlayers = game:GetNumPlayers()
     if hudDirty or not cachedPlayerIconData or cachedPlayerCount ~= totalPlayers then
@@ -554,71 +565,78 @@ function ExtraHUD:PostRender()
     end
     local playerIconData = cachedPlayerIconData
     if not playerIconData then return end
-    
+
     -- Get cached layout (only recalculates when dirty)
-    local layout = UpdateLayout(playerIconData, cfg, screenW, screenH)
-    
+    local layout = UpdateLayout(playerIconData, clampedCfg, screenW, screenH)
+
+    -- Use live config for boundary/minimap positions
+    local boundaryX = tonumber(liveCfg.boundaryX) or 0
+    local boundaryY = tonumber(liveCfg.boundaryY) or 0
+    local boundaryW = tonumber(liveCfg.boundaryW) or 0
+    local boundaryH = tonumber(liveCfg.boundaryH) or 0
+    local minimapX = tonumber(liveCfg.minimapX) or 0
+    local minimapY = tonumber(liveCfg.minimapY) or 0
+    local minimapW = tonumber(liveCfg.minimapW) or 0
+    local minimapH = tonumber(liveCfg.minimapH) or 0
+    local minimapPadding = liveCfg.minimapPadding or 0
+
     -- Apply minimap avoidance and boundary clamping to start position
     local startX, startY = layout.startX, layout.startY
-    
+
     -- Minimap avoidance (only if minimap is configured)
-    if cfg.minimapW > 0 and cfg.minimapH > 0 then
+    if minimapW > 0 and minimapH > 0 then
         local hudLeft, hudRight = startX, startX + layout.totalWidth
         local hudTop, hudBottom = startY, startY + layout.totalHeight
-        local miniLeft, miniRight = cfg.minimapX, cfg.minimapX + cfg.minimapW
-        local miniTop, miniBottom = cfg.minimapY, cfg.minimapY + cfg.minimapH
-        
+        local miniLeft, miniRight = minimapX, minimapX + minimapW
+        local miniTop, miniBottom = minimapY, minimapY + minimapH
+
         local overlap = not (hudRight < miniLeft or hudLeft > miniRight or hudBottom < miniTop or hudTop > miniBottom)
         if overlap then
-            startY = miniBottom + cfg.minimapPadding
+            startY = miniBottom + minimapPadding
         end
     end
-    
-    -- Clamp to boundary
-    startX = math.max(cfg.boundaryX, math.min(startX, cfg.boundaryX + cfg.boundaryW - layout.totalWidth))
-    startY = math.max(cfg.boundaryY, math.min(startY, cfg.boundaryY + cfg.boundaryH - layout.totalHeight))
-    
+
+    -- Clamp to boundary (using live config)
+    startX = math.max(boundaryX, math.min(startX, boundaryX + boundaryW - layout.totalWidth))
+    startY = math.max(boundaryY, math.min(startY, boundaryY + boundaryH - layout.totalHeight))
+
     -- Draw icons + dividers using cached layout
     local curX = startX
     for i, items in ipairs(playerIconData) do
         local cols = layout.playerColumns[i]
         local blockW = layout.blockWidths[i]
         local rows = math.ceil(#items / cols)
-        
+
         for idx, itemId in ipairs(items) do
             local row = math.floor((idx - 1) / cols)
             local col = (idx - 1) % cols
-            local x = curX + col * (ICON_SIZE + cfg.xSpacing) * layout.scale
-            local y = startY + row * (ICON_SIZE + cfg.ySpacing) * layout.scale
-            RenderItemIcon(itemId, x, y, layout.scale, cfg.opacity)
+            local x = curX + col * (ICON_SIZE + clampedCfg.xSpacing) * layout.scale
+            local y = startY + row * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
+            RenderItemIcon(itemId, x, y, layout.scale, clampedCfg.opacity)
         end
-        
+
         if i < #playerIconData then
-            local dividerX = curX + blockW + (INTER_PLAYER_SPACING * layout.scale) / 2 + cfg.dividerOffset
+            local dividerX = curX + blockW + (INTER_PLAYER_SPACING * layout.scale) / 2 + clampedCfg.dividerOffset
             local lineChar = "|"
             local dividerStep = ICON_SIZE * 0.375 * layout.scale
             local lines = math.floor(layout.totalHeight / dividerStep)
             for l = 0, lines do
-                Isaac.RenderScaledText(lineChar, dividerX, startY + cfg.dividerYOffset + l * dividerStep, layout.scale, layout.scale, 1, 1, 1, cfg.opacity)
+                Isaac.RenderScaledText(lineChar, dividerX, startY + clampedCfg.dividerYOffset + l * dividerStep, layout.scale, layout.scale, 1, 1, 1, clampedCfg.opacity)
             end
         end
         curX = curX + blockW + INTER_PLAYER_SPACING * layout.scale
     end
     -- Debug overlay: only draw the HUD boundary border, no text or callback names
-    if cfg.debugOverlay then
+    if clampedCfg.debugOverlay then
         -- Draw a lineart border for the HUD boundary for debug/adjustment (NO TEXT)
-        local bx = tonumber(cfg.boundaryX) or 0
-        local by = tonumber(cfg.boundaryY) or 0
-        local bw = tonumber(cfg.boundaryW) or 0
-        local bh = tonumber(cfg.boundaryH) or 0
-        if bw > 0 and bh > 0 then
-            for i=0,bw,32 do
-                Isaac.RenderText("-", bx+i, by, 1, 1, 1, 1)
-                Isaac.RenderText("-", bx+i, by+bh-8, 1, 1, 1, 1)
+        if boundaryW > 0 and boundaryH > 0 then
+            for i=0,boundaryW,32 do
+                Isaac.RenderText("-", boundaryX+i, boundaryY, 1, 1, 1, 1)
+                Isaac.RenderText("-", boundaryX+i, boundaryY+boundaryH-8, 1, 1, 1, 1)
             end
-            for j=0,bh,32 do
-                Isaac.RenderText("|", bx, by+j, 1, 1, 1, 1)
-                Isaac.RenderText("|", bx+bw-8, by+j, 1, 1, 1, 1)
+            for j=0,boundaryH,32 do
+                Isaac.RenderText("|", boundaryX, boundaryY+j, 1, 1, 1, 1)
+                Isaac.RenderText("|", boundaryX+boundaryW-8, boundaryY+j, 1, 1, 1, 1)
             end
         end
     end
@@ -699,6 +717,8 @@ function ExtraHUD:PostRender()
             AddDebugLog("[Overlay] showMinimap: minimap config value(s) nil or zero, skipping overlay")
         end
     end
+
+    -- ...existing code...
 end
 
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_RENDER, ExtraHUD.PostRender)
