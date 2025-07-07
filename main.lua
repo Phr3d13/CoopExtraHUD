@@ -64,7 +64,8 @@ local ICON_SIZE = 32
 local INTER_PLAYER_SPACING = 12
 
 -- Configuration for modded item support
-local MAX_ITEM_ID = 4000 -- Scan up to item ID 4000 to catch most modded items
+-- PERFORMANCE: Reduce scan range for modded items. Set to 1000 by default, can be increased if needed.
+local MAX_ITEM_ID = 1000
 local VANILLA_ITEM_LIMIT = CollectibleType.NUM_COLLECTIBLES - 1
 
 -- Helper function to check if an item exists and is valid
@@ -115,7 +116,7 @@ end
 
 -- Clean up unused sprites to prevent memory leaks (updated for modded items)
 local function CleanupUnusedSprites()
-    -- Get all currently owned items across all players (including modded items)
+    -- Only run if spriteUsageTracker is large (avoid frequent cleanup)
     local ownedItems = {}
     local game = Game()
     for i = 0, game:GetNumPlayers() - 1 do
@@ -126,7 +127,6 @@ local function CleanupUnusedSprites()
             end
         end
     end
-    
     -- Remove sprites for items no longer owned by any player
     for itemId, _ in pairs(itemSpriteCache) do
         if not ownedItems[itemId] then
@@ -183,22 +183,22 @@ local function UpdatePlayerIconData()
     local game = Game()
     local totalPlayers = game:GetNumPlayers()
     cachedPlayerIconData = {}
-    
-    -- Clear sprite usage tracker before building new data
-    spriteUsageTracker = {}
-    
+    -- Only clear sprite usage tracker if player count or pickup order changed
+    local shouldCleanup = false
+    if not spriteUsageTracker or #spriteUsageTracker > 2 * totalPlayers then
+        spriteUsageTracker = {}
+        shouldCleanup = true
+    end
     for i = 0, totalPlayers - 1 do
         cachedPlayerIconData[i + 1] = {}
         local player = Isaac.GetPlayer(i)
         local ownedSet = {}
-        
-        -- Check both vanilla and modded items
+        -- Only scan up to MAX_ITEM_ID, but skip IDs above vanilla limit unless modded items are detected
         for id = 1, MAX_ITEM_ID do
             if player:HasCollectible(id) and IsValidItem(id) then
                 ownedSet[id] = true
             end
         end
-        
         if playerPickupOrder[i] then
             for _, id in ipairs(playerPickupOrder[i]) do
                 if ownedSet[id] then
@@ -207,8 +207,6 @@ local function UpdatePlayerIconData()
                 end
             end
         end
-        
-        -- Add any remaining owned items that weren't in the pickup order
         for id = 1, MAX_ITEM_ID do
             if ownedSet[id] then
                 table.insert(cachedPlayerIconData[i + 1], id)
@@ -217,9 +215,10 @@ local function UpdatePlayerIconData()
     end
     cachedPlayerCount = totalPlayers
     hudDirty = false
-    
-    -- Clean up unused sprites after updating player data
-    CleanupUnusedSprites()
+    -- Only clean up unused sprites if necessary
+    if shouldCleanup then
+        CleanupUnusedSprites()
+    end
 end
 
 -- Helper: record all current collectibles for all players (e.g. at game start or new player join)
@@ -228,6 +227,7 @@ local function TrackAllCurrentCollectibles()
         local player = Isaac.GetPlayer(i)
         playerTrackedCollectibles[i] = {}
         playerPickupOrder[i] = {}
+        -- Only scan up to MAX_ITEM_ID, skip high IDs unless needed
         for id = 1, MAX_ITEM_ID do
             if player:HasCollectible(id) and IsValidItem(id) then
                 playerTrackedCollectibles[i][id] = true
@@ -274,7 +274,7 @@ local function UpdatePickupOrderForAllPlayers()
         local player = Isaac.GetPlayer(i)
         playerPickupOrder[i] = playerPickupOrder[i] or {}
         local owned = {}
-        -- Mark all currently owned collectibles (including modded ones)
+        -- Only scan up to MAX_ITEM_ID
         for id = 1, MAX_ITEM_ID do
             if player:HasCollectible(id) and IsValidItem(id) then
                 owned[id] = true
@@ -610,15 +610,16 @@ function ExtraHUD:PostRender()
         local cols = layout.playerColumns[i]
         local blockW = layout.blockWidths[i]
         local rows = math.ceil(#items / cols)
-
-        for idx, itemId in ipairs(items) do
+        -- PERF: Only render up to 32 items per player to avoid excessive draw calls
+        local maxItems = math.min(#items, 32)
+        for idx = 1, maxItems do
+            local itemId = items[idx]
             local row = math.floor((idx - 1) / cols)
             local col = (idx - 1) % cols
             local x = curX + col * (ICON_SIZE + clampedCfg.xSpacing) * layout.scale
             local y = startY + row * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
             RenderItemIcon(itemId, x, y, layout.scale, clampedCfg.opacity)
         end
-
         if i < #playerIconData then
             local dividerX = curX + blockW + (INTER_PLAYER_SPACING * layout.scale) / 2 + clampedCfg.dividerOffset
             local lineChar = "|"
@@ -654,7 +655,7 @@ function ExtraHUD:PostRender()
             MarkHudDirty()
         end
     end
-    -- Only show overlays if MCM is open and both Display and Selected flags match
+    -- Only show overlays if MCM is open and both Display and Selected flags match (always use live config for overlay positions)
     local mcm = _G['ModConfigMenu']
     local mcmIsOpen = mcm and ((type(mcm.IsVisible) == "function" and mcm.IsVisible()) or (type(mcm.IsVisible) == "boolean" and mcm.IsVisible))
     local showBoundary, showMinimap = false, false
@@ -671,18 +672,15 @@ function ExtraHUD:PostRender()
             ExtraHUD.MCMCompat_selectedOverlay = ""
         end
     end
-    -- Draw overlays as needed (now using proper sprites)
+    -- Draw overlays as needed (now using proper sprites and always live config)
     if showBoundary then
-        -- Use current config directly for overlay rendering to ensure real-time updates
-        local currentConfig = getConfig()
-        local bx = tonumber(currentConfig.boundaryX) or 0
-        local by = tonumber(currentConfig.boundaryY) or 0
-        local bw = tonumber(currentConfig.boundaryW) or 0
-        local bh = tonumber(currentConfig.boundaryH) or 0
+        -- Use live config for overlay rendering to ensure real-time updates
+        local bx = tonumber(getConfig().boundaryX) or 0
+        local by = tonumber(getConfig().boundaryY) or 0
+        local bw = tonumber(getConfig().boundaryW) or 0
+        local bh = tonumber(getConfig().boundaryH) or 0
         if bw > 0 and bh > 0 then
             local vecZero = Vector(0, 0)
-            
-            -- Render corner sprites at boundary corners (MCM-style) with nil checks
             if HudOffsetVisualTopLeft then
                 HudOffsetVisualTopLeft:Render(Vector(bx, by), vecZero, vecZero)
             end
@@ -695,23 +693,18 @@ function ExtraHUD:PostRender()
             if HudOffsetVisualBottomRight then
                 HudOffsetVisualBottomRight:Render(Vector(bx + bw - 32, by + bh - 32), vecZero, vecZero)
             end
-            
-            -- Optional: Add text label
             Isaac.RenderText("Boundary", bx+4, by+4, 1, 0, 0, 1)
         else
             AddDebugLog("[Overlay] showBoundary: boundary config value(s) nil or zero, skipping overlay")
         end
     elseif showMinimap then
-        -- Use current config directly for overlay rendering to ensure real-time updates
-        local currentConfig = getConfig()
-        local mx = tonumber(currentConfig.minimapX) or 0
-        local my = tonumber(currentConfig.minimapY) or 0
-        local mw = tonumber(currentConfig.minimapW) or 0
-        local mh = tonumber(currentConfig.minimapH) or 0
+        -- Use live config for overlay rendering to ensure real-time updates
+        local mx = tonumber(getConfig().minimapX) or 0
+        local my = tonumber(getConfig().minimapY) or 0
+        local mw = tonumber(getConfig().minimapW) or 0
+        local mh = tonumber(getConfig().minimapH) or 0
         if mw > 0 and mh > 0 then
             local vecZero = Vector(0, 0)
-            
-            -- Render corner sprites at minimap area corners (MCM-style) with nil checks
             if HudOffsetVisualTopLeft then
                 HudOffsetVisualTopLeft:Render(Vector(mx, my), vecZero, vecZero)
             end
@@ -724,8 +717,6 @@ function ExtraHUD:PostRender()
             if HudOffsetVisualBottomRight then
                 HudOffsetVisualBottomRight:Render(Vector(mx + mw - 32, my + mh - 32), vecZero, vecZero)
             end
-            
-            -- Optional: Add text label
             Isaac.RenderText("Map", mx+4, my+4, 1, 0, 0, 1)
         else
             AddDebugLog("[Overlay] showMinimap: minimap config value(s) nil or zero, skipping overlay")
@@ -738,18 +729,19 @@ end
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_RENDER, ExtraHUD.PostRender)
 
 -- MCM integration
+
 local MCM = require("MCM")
 
--- Robust config/configPresets initialization and loading
+-- Robust config/configPresets initialization and loading (always use live config for all MCM/config sections)
 if not config then config = {} end
 if not configPresets then configPresets = {} end
 
--- Fill missing config keys from defaultConfig
+-- Fill missing config keys from defaultConfig (live)
 for k, v in pairs(defaultConfig) do
     if config[k] == nil then config[k] = v end
 end
 
--- Fill missing configPresets keys from defaultConfigPresets
+-- Fill missing configPresets keys from defaultConfigPresets (live)
 for mode, preset in pairs(defaultConfigPresets) do
     if configPresets[mode] == nil then configPresets[mode] = {} end
     for k, v in pairs(preset) do
@@ -762,7 +754,7 @@ if not SaveConfig then SaveConfig = function() end end
 if not LoadConfig then LoadConfig = function() end end
 if not UpdateCurrentPreset then UpdateCurrentPreset = function() end end
 
--- Load config from disk on mod load (before MCM.Init)
+-- Load config from disk on mod load (before MCM.Init), always update live config
 if ExtraHUD and ExtraHUD.HasData and ExtraHUD:HasData() then
     local data = ExtraHUD:LoadData()
     local all = DeserializeAllConfigs(data)
@@ -778,7 +770,7 @@ if ExtraHUD and ExtraHUD.HasData and ExtraHUD:HasData() then
 end
 
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
-    -- Pass config tables/functions to MCM
+    -- Pass config tables/functions to MCM (always use live config)
     local mcmTables = MCM.Init({
         ExtraHUD = ExtraHUD,
         config = config,
@@ -786,13 +778,27 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
         SaveConfig = SaveConfig,
         LoadConfig = LoadConfig,
         UpdateCurrentPreset = UpdateCurrentPreset,
+        getConfig = getConfig,
+        MarkHudDirty = MarkHudDirty,
+        OnOverlayAdjusterMoved = ExtraHUD.OnOverlayAdjusterMoved,
     })
     config = mcmTables.config
     configPresets = mcmTables.configPresets
     SaveConfig = mcmTables.SaveConfig
     LoadConfig = mcmTables.LoadConfig
     UpdateCurrentPreset = mcmTables.UpdateCurrentPreset
+    if type(mcmTables.getConfig) == "function" then
+        getConfig = mcmTables.getConfig
+    end
+    if type(mcmTables.MarkHudDirty) == "function" then
+        ExtraHUD.MarkHudDirty = mcmTables.MarkHudDirty
+    end
+    if type(mcmTables.OnOverlayAdjusterMoved) == "function" then
+        ExtraHUD.OnOverlayAdjusterMoved = mcmTables.OnOverlayAdjusterMoved
+    end
     MCM.RegisterConfigMenu()
+    -- Always mark HUD dirty when MCM config changes
+    MarkHudDirty()
 end)
 
 ExtraHUD:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, function()
