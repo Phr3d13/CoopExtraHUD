@@ -544,10 +544,16 @@ local function GetClampedConfig(cfg, screenW, screenH)
 end
 
 -- Overlay sprites (created once and reused, MCM-style)
+
 local HudOffsetVisualTopLeft = GetMenuAnm2Sprite("Offset", 0)
-local HudOffsetVisualTopRight = GetMenuAnm2Sprite("Offset", 1) 
+local HudOffsetVisualTopRight = GetMenuAnm2Sprite("Offset", 1)
 local HudOffsetVisualBottomRight = GetMenuAnm2Sprite("Offset", 2)
 local HudOffsetVisualBottomLeft = GetMenuAnm2Sprite("Offset", 3)
+
+-- Divider sprite (1x1 white pixel, scalable)
+local DividerSprite = Sprite()
+DividerSprite:Load("gfx/ui/coopextrahud/overlay.anm2", true)
+DividerSprite:SetFrame("Divider", 0)
 
 function ExtraHUD:PostRender()
     local game = Game()
@@ -622,12 +628,15 @@ function ExtraHUD:PostRender()
         end
         if i < #playerIconData then
             local dividerX = curX + blockW + (INTER_PLAYER_SPACING * layout.scale) / 2 + clampedCfg.dividerOffset
-            local lineChar = "|"
-            local dividerStep = ICON_SIZE * 0.375 * layout.scale
-            local lines = math.floor(layout.totalHeight / dividerStep)
-            for l = 0, lines do
-                Isaac.RenderScaledText(lineChar, dividerX, startY + clampedCfg.dividerYOffset + l * dividerStep, layout.scale, layout.scale, 1, 1, 1, clampedCfg.opacity)
-            end
+            local dividerY = startY + clampedCfg.dividerYOffset
+            local dividerHeight = layout.totalHeight
+            -- Robust divider sprite scaling: scale factor, not pixel size
+            local spriteBaseHeight = 1 -- divider.png is 1x1 px
+            local heightScale = math.max(1, math.floor(dividerHeight + 0.5))
+            DividerSprite.Scale = Vector(1, heightScale)
+            DividerSprite.Color = Color(1, 1, 1, clampedCfg.opacity)
+            -- Render at the top of the divider area
+            DividerSprite:Render(Vector(dividerX, dividerY), Vector.Zero, Vector.Zero)
         end
         curX = curX + blockW + INTER_PLAYER_SPACING * layout.scale
     end
