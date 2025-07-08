@@ -554,6 +554,7 @@ local HudOffsetVisualBottomLeft = GetMenuAnm2Sprite("Offset", 3)
 local DividerSprite = Sprite()
 DividerSprite:Load("gfx/ui/coopextrahud/overlay.anm2", true)
 DividerSprite:SetFrame("Divider", 0)
+DividerSprite:LoadGraphics()
 
 function ExtraHUD:PostRender()
     local game = Game()
@@ -615,6 +616,11 @@ function ExtraHUD:PostRender()
     for i, items in ipairs(playerIconData) do
         local cols = layout.playerColumns[i]
         local blockW = layout.blockWidths[i]
+        -- Defensive: skip this player if layout columns or block width are missing/invalid
+        if type(cols) ~= "number" or cols < 1 or type(blockW) ~= "number" or blockW < 1 then
+            -- Skip this player, prevents crash for users without MCM or with broken config
+            goto continue_player_loop
+        end
         local rows = math.ceil(#items / cols)
         -- PERF: Only render up to 32 items per player to avoid excessive draw calls
         local maxItems = math.min(#items, 32)
@@ -639,6 +645,7 @@ function ExtraHUD:PostRender()
             DividerSprite:Render(Vector(dividerX, dividerY), Vector.Zero, Vector.Zero)
         end
         curX = curX + blockW + INTER_PLAYER_SPACING * layout.scale
+        ::continue_player_loop::
     end
     -- Debug overlay: only draw the HUD boundary border, no text or callback names
     if getConfig().debugOverlay then
