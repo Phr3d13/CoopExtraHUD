@@ -56,7 +56,7 @@ function M.RegisterConfigMenu()
             end
             SaveConfig()
             -- Invalidate caches so HUD updates immediately
-            if ExtraHUD and ExtraHUD.MarkHudDirty then ExtraHUD.MarkHudDirty() end
+            if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
         end,
     })
 
@@ -81,7 +81,7 @@ function M.RegisterConfigMenu()
                 SaveConfig()
                 resetFlag = false -- immediately reset toggle
                 -- Invalidate caches so HUD updates immediately
-                if ExtraHUD and ExtraHUD.MarkHudDirty then ExtraHUD.MarkHudDirty() end
+                if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
             end
         end,
     })
@@ -94,7 +94,7 @@ function M.RegisterConfigMenu()
             OnChange = function(v) 
                 onchg(v)
                 -- Invalidate caches so HUD updates immediately
-                if ExtraHUD and ExtraHUD.MarkHudDirty then ExtraHUD.MarkHudDirty() end
+                if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
             end,
             Minimum = min, Maximum = max, Step = step,
         })
@@ -270,7 +270,7 @@ function M.RegisterConfigMenu()
                     ExtraHUD.MCMCompat_displayingOverlay = "boundary"
                     ExtraHUD.MCMCompat_selectedOverlay = "boundary"
                     -- Invalidate caches so overlay updates immediately
-                    if ExtraHUD.MarkHudDirty then ExtraHUD.MarkHudDirty() end
+                    if ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
                 end
             end,
             OnSelect = function(...)
@@ -329,7 +329,7 @@ function M.RegisterConfigMenu()
                     ExtraHUD.MCMCompat_displayingOverlay = "minimap"
                     ExtraHUD.MCMCompat_selectedOverlay = "minimap"
                     -- Invalidate caches so overlay updates immediately
-                    if ExtraHUD.MarkHudDirty then ExtraHUD.MarkHudDirty() end
+                    if ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
                 end
             end,
             OnSelect = function(...)
@@ -354,7 +354,10 @@ function M.RegisterConfigMenu()
         Type = ModConfigMenu.OptionType.BOOLEAN,
         CurrentSetting = function() return config.debugOverlay end,
         Display = function() return "Debug Overlay: " .. (config.debugOverlay and "On" or "Off") end,
-        OnChange = function(v) config.debugOverlay = v; UpdateCurrentPreset(); SaveConfig() end,
+        OnChange = function(v)
+            config.debugOverlay = v; UpdateCurrentPreset(); SaveConfig();
+            if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
+        end,
     })
 
     print("[CoopExtraHUD] Config menu registered.")

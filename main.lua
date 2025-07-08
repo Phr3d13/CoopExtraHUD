@@ -769,6 +769,7 @@ if ExtraHUD and ExtraHUD.HasData and ExtraHUD:HasData() then
     end
 end
 
+
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
     -- Pass config tables/functions to MCM (always use live config)
     local mcmTables = MCM.Init({
@@ -780,7 +781,13 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
         UpdateCurrentPreset = UpdateCurrentPreset,
         getConfig = getConfig,
         MarkHudDirty = MarkHudDirty,
-        OnOverlayAdjusterMoved = ExtraHUD.OnOverlayAdjusterMoved,
+        OnOverlayAdjusterMoved = function()
+            -- Invalidate all caches and force HUD/layout update immediately
+            cachedClampedConfig = nil
+            cachedLayout.valid = false
+            lastScreenW, lastScreenH = 0, 0
+            MarkHudDirty()
+        end,
     })
     config = mcmTables.config
     configPresets = mcmTables.configPresets
@@ -795,6 +802,14 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
     end
     if type(mcmTables.OnOverlayAdjusterMoved) == "function" then
         ExtraHUD.OnOverlayAdjusterMoved = mcmTables.OnOverlayAdjusterMoved
+    else
+        -- Always provide a fallback that forces a full HUD/layout update
+        ExtraHUD.OnOverlayAdjusterMoved = function()
+            cachedClampedConfig = nil
+            cachedLayout.valid = false
+            lastScreenW, lastScreenH = 0, 0
+            MarkHudDirty()
+        end
     end
     MCM.RegisterConfigMenu()
     -- Always mark HUD dirty when MCM config changes
