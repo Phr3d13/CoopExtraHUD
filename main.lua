@@ -1,9 +1,9 @@
+
 local ExtraHUD = RegisterMod("CoopExtraHUD", 1)
 
 -- Default config values
 local config = nil -- will be set by MCM.Init
 
--- Temporary default config for early access (before MCM.Init)
 local defaultConfig = {
     scale = 0.4, -- updated default
     xSpacing = 5, -- updated default
@@ -28,12 +28,29 @@ local defaultConfig = {
     debugOverlay = false,
     _mcm_map_overlay_refresh = 244,
     _mcm_boundary_overlay_refresh = 574,
+
+    disableVanillaExtraHUD = true, -- disables vanilla ExtraHUD by default
 }
 
 -- Helper to get config safely before MCM.Init
 local function getConfig()
     return config or defaultConfig
 end
+
+-- Helper to disable vanilla ExtraHUD (set Options.ExtraHUD = 0)
+local function DisableVanillaExtraHUD()
+    local cfg = getConfig()
+    if cfg.disableVanillaExtraHUD then
+        if Options and type(Options) == "table" and Options.ExtraHUD ~= nil and Options.ExtraHUD ~= 0 then
+            Options.ExtraHUD = 0
+        end
+        -- Only call ExecuteCommand if there is at least one player (prevents crash)
+        if Isaac.ExecuteCommand and Game():GetNumPlayers() > 0 then
+            Isaac.ExecuteCommand("setoption hudExtraHUD 0")
+        end
+    end
+end
+
 
 -- Preset configurations keyed by boolean hudMode
 local configPresets = nil -- will be set by MCM.Init
@@ -239,6 +256,8 @@ end
 
 -- On game start, track all current collectibles and pickup order
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
+    -- Disable vanilla ExtraHUD if configured
+    DisableVanillaExtraHUD()
     TrackAllCurrentCollectibles()
     -- Clear sprite cache on new game to prevent memory buildup
     itemSpriteCache = {}
@@ -742,6 +761,10 @@ function ExtraHUD:PostRender()
     -- ...existing code...
 end
 
+
+-- Also disable vanilla ExtraHUD on mod load (first load)
+DisableVanillaExtraHUD()
+
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_RENDER, ExtraHUD.PostRender)
 
 -- MCM integration
@@ -832,9 +855,17 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
     MarkHudDirty()
 end)
 
+
+
+
 ExtraHUD:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, function()
     SaveConfig()
 end)
+
+-- Ensure all blocks are closed
+-- (Fix for missing end)
+
+
 
 
 
