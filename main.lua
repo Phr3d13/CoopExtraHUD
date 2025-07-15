@@ -1,8 +1,5 @@
 local ExtraHUD = RegisterMod("CoopExtraHUD", 1)
 
--- IMMEDIATE DEBUG: Test if mod is loading at all
-Isaac.DebugString("[CoopExtraHUD] *** MOD LOADING STARTED ***")
-
 -- Default config values
 local config = nil -- will be set by MCM.Init
 
@@ -124,7 +121,6 @@ local function AddDebugLog(msg)
     -- Suppress all debug logging to log.txt except for MCM function list (handled separately)
     table.insert(debugLogs, 1, msg)
     if #debugLogs > 5 then table.remove(debugLogs) end
-    -- No Isaac.DebugString(msg) here
 end
 
 -- Sprite cache for item icons with cleanup tracking
@@ -458,25 +454,18 @@ end
 ExtraHUD.MCMCompat_displayingOverlay = ""
 ExtraHUD.MCMCompat_selectedOverlay = ""
 ExtraHUD.MCMCompat_overlayTimestamp = 0
+-- EID-style automatic overlay detection
+ExtraHUD.MCMCompat_displayingEIDTab = ""
 
--- Debug frame counter to reduce spam
-local debugFrameCounter = 0
+-- Cache MCM state to avoid checking every frame
+local lastMCMState = false
+local mcmStateCheckCounter = 0
 -- Sprite-based overlay system (following MCM exact implementation)
 local function GetMenuAnm2Sprite(animation, frame)
     local sprite = Sprite()
     sprite:Load("gfx/ui/coopextrahud/overlay.anm2", true)
     sprite:SetFrame(animation, frame)
-    Isaac.DebugString("[CoopExtraHUD] Created overlay sprite: " .. animation .. ", frame " .. frame)
     return sprite
-end
-
--- Test sprite loading immediately
-Isaac.DebugString("[CoopExtraHUD] Testing sprite loading...")
-local testSprite = GetMenuAnm2Sprite("Offset", 0)
-if testSprite then
-    Isaac.DebugString("[CoopExtraHUD] Test sprite loaded successfully")
-else
-    Isaac.DebugString("[CoopExtraHUD] ERROR: Test sprite failed to load")
 end
 
 -- Optimized column calculation
@@ -702,10 +691,6 @@ local function HandleManualOverlayToggle()
         currentManualOverlayType = newOverlayType
         ExtraHUD.MCMCompat_displayingOverlay = newOverlayType
         ExtraHUD.MCMCompat_selectedOverlay = newOverlayType
-        
-        local overlayName = newOverlayType == "" and "None" or newOverlayType
-        Isaac.DebugString("[CoopExtraHUD] Manual overlay set: " .. overlayName)
-        print("[CoopExtraHUD] Manual overlay: " .. overlayName .. " (B=Boundary, M=Minimap, H=HUD Offset, N=None)")
     end
 end
 
@@ -749,7 +734,7 @@ function ExtraHUD:PostRender()
     -- Get cached layout (only recalculates when dirty)
     local layout = UpdateLayout(playerIconData, clampedCfg, screenW, screenH)
 
-    -- Use live config for boundary/minimap positions
+    -- Extract config values once (cached from liveCfg)
     local boundaryX = tonumber(liveCfg.boundaryX) or 0
     local boundaryY = tonumber(liveCfg.boundaryY) or 0
     local boundaryW = tonumber(liveCfg.boundaryW) or 0
@@ -760,23 +745,18 @@ function ExtraHUD:PostRender()
     local minimapH = tonumber(liveCfg.minimapH) or 0
     local minimapPadding = liveCfg.minimapPadding or 0
 
-    -- Apply minimap avoidance and boundary clamping to start position (always use live config for map area)
+    -- Apply minimap avoidance and boundary clamping to start position
     local startX, startY = layout.startX, layout.startY
 
-    -- Minimap avoidance (always use live config for minimap area)
-    local mapX = tonumber(liveCfg.minimapX) or 0
-    local mapY = tonumber(liveCfg.minimapY) or 0
-    local mapW = tonumber(liveCfg.minimapW) or 0
-    local mapH = tonumber(liveCfg.minimapH) or 0
-    local mapPad = liveCfg.minimapPadding or 0
-    if mapW > 0 and mapH > 0 then
+    -- Minimap avoidance (reuse extracted values)
+    if minimapW > 0 and minimapH > 0 then
         local hudLeft, hudRight = startX, startX + layout.totalWidth
         local hudTop, hudBottom = startY, startY + layout.totalHeight
-        local miniLeft, miniRight = mapX, mapX + mapW
-        local miniTop, miniBottom = mapY, mapY + mapH
+        local miniLeft, miniRight = minimapX, minimapX + minimapW
+        local miniTop, miniBottom = minimapY, minimapY + minimapH
         local overlap = not (hudRight < miniLeft or hudLeft > miniRight or hudBottom < miniTop or hudTop > miniBottom)
         if overlap then
-            startY = miniBottom + mapPad
+            startY = miniBottom + minimapPadding
         end
     end
 
@@ -887,76 +867,82 @@ function ExtraHUD:PostRender()
             MarkHudDirty()
         end
     end
-    -- Update MCM overlay detection every frame when MCM is open
-    -- Manual overlay controls via MCM toggle switches only
-    -- All automatic detection has been removed per user request
+    
+    -- Optimized MCM overlay detection: only check every 5 frames to reduce overhead
+    mcmStateCheckCounter = mcmStateCheckCounter + 1
+    if mcmStateCheckCounter >= 5 then
+        mcmStateCheckCounter = 0
+        
+        -- EID-style automatic overlay detection based on which MCM tab is being viewed
+        local mcm = _G['ModConfigMenu']
+        local mcmIsOpen = mcm and ((type(mcm.IsVisible) == "function" and mcm.IsVisible()) or (type(mcm.IsVisible) == "boolean" and mcm.IsVisible))
+        
+        -- Only update overlay state when MCM state changes
+        if mcmIsOpen ~= lastMCMState then
+            lastMCMState = mcmIsOpen
+            
+            if mcmIsOpen then
+                -- MCM just opened - apply automatic overlays based on current tab
+                if ExtraHUD.MCMCompat_displayingEIDTab == "HUD" then
+                    ExtraHUD.MCMCompat_displayingOverlay = "hudoffset"
+                    ExtraHUD.MCMCompat_selectedOverlay = "hudoffset"
+                elseif ExtraHUD.MCMCompat_displayingEIDTab == "Boundaries" then
+                    ExtraHUD.MCMCompat_displayingOverlay = "boundary"
+                    ExtraHUD.MCMCompat_selectedOverlay = "boundary"
+                elseif ExtraHUD.MCMCompat_displayingEIDTab == "Minimap" then
+                    ExtraHUD.MCMCompat_displayingOverlay = "minimap"
+                    ExtraHUD.MCMCompat_selectedOverlay = "minimap"
+                elseif ExtraHUD.MCMCompat_displayingEIDTab == "" then
+                    ExtraHUD.MCMCompat_displayingOverlay = ""
+                    ExtraHUD.MCMCompat_selectedOverlay = ""
+                end
+            else
+                -- MCM just closed - clear automatic overlays but keep manual ones
+                if ExtraHUD.MCMCompat_displayingEIDTab ~= "" then
+                    ExtraHUD.MCMCompat_displayingEIDTab = ""
+                    -- Only clear overlay flags if they weren't set manually
+                    if ExtraHUD.MCMCompat_displayingOverlay == "hudoffset" or ExtraHUD.MCMCompat_displayingOverlay == "boundary" or ExtraHUD.MCMCompat_displayingOverlay == "minimap" then
+                        ExtraHUD.MCMCompat_displayingOverlay = ""
+                        ExtraHUD.MCMCompat_selectedOverlay = ""
+                    end
+                end
+            end
+        elseif mcmIsOpen then
+            -- MCM is open and state didn't change - only update overlays if tab changed
+            if ExtraHUD.MCMCompat_displayingEIDTab == "HUD" then
+                ExtraHUD.MCMCompat_displayingOverlay = "hudoffset"
+                ExtraHUD.MCMCompat_selectedOverlay = "hudoffset"
+            elseif ExtraHUD.MCMCompat_displayingEIDTab == "Boundaries" then
+                ExtraHUD.MCMCompat_displayingOverlay = "boundary"
+                ExtraHUD.MCMCompat_selectedOverlay = "boundary"
+            elseif ExtraHUD.MCMCompat_displayingEIDTab == "Minimap" then
+                ExtraHUD.MCMCompat_displayingOverlay = "minimap"
+                ExtraHUD.MCMCompat_selectedOverlay = "minimap"
+            elseif ExtraHUD.MCMCompat_displayingEIDTab == "" then
+                ExtraHUD.MCMCompat_displayingOverlay = ""
+                ExtraHUD.MCMCompat_selectedOverlay = ""
+            end
+        end
+    end
     
     -- Manual overlay controls available as backup (B=Boundary, M=Minimap, H=HUD Offset, N=None)
     HandleManualOverlayToggle()
     
-    -- Debug: Log overlay flags every 120 frames to monitor their state
-    debugFrameCounter = debugFrameCounter + 1
-    if debugFrameCounter % 120 == 1 then
-        Isaac.DebugString("[CoopExtraHUD] Overlay flags - Displaying: '" .. (ExtraHUD.MCMCompat_displayingOverlay or "nil") .. "', Selected: '" .. (ExtraHUD.MCMCompat_selectedOverlay or "nil") .. "'")
-    end
-    
-    -- Only show overlays if MCM is open and both Display and Selected flags match (always use live config for overlay positions)
-    -- OR if overlays are manually triggered via helper options (allow overlays even when MCM is closed)
-    local mcm = _G['ModConfigMenu']
-    local mcmIsOpen = mcm and ((type(mcm.IsVisible) == "function" and mcm.IsVisible()) or (type(mcm.IsVisible) == "boolean" and mcm.IsVisible))
     -- Check if we should show overlays in MCM
     local showBoundary, showMinimap, showHudOffset = false, false, false
     
     -- Show overlays if MCM is open OR if they were manually triggered
-    if mcmIsOpen or ExtraHUD.MCMCompat_displayingOverlay ~= "" then
+    if lastMCMState or ExtraHUD.MCMCompat_displayingOverlay ~= "" then
         -- Check for boundary/minimap/hudoffset overlays using the dual-flag system
         if ExtraHUD.MCMCompat_displayingOverlay == "boundary" and ExtraHUD.MCMCompat_selectedOverlay == "boundary" then
             showBoundary = true
-            -- Debug: Log when boundary overlay is active
-            Isaac.DebugString("[CoopExtraHUD] Rendering boundary overlay")
         elseif ExtraHUD.MCMCompat_displayingOverlay == "minimap" and ExtraHUD.MCMCompat_selectedOverlay == "minimap" then
             showMinimap = true
-            -- Debug: Log when minimap overlay is active
-            Isaac.DebugString("[CoopExtraHUD] Rendering minimap overlay")
         elseif ExtraHUD.MCMCompat_displayingOverlay == "hudoffset" and ExtraHUD.MCMCompat_selectedOverlay == "hudoffset" then
             showHudOffset = true
-            -- Debug: Log when HUD offset overlay is active
-            Isaac.DebugString("[CoopExtraHUD] Rendering HUD offset overlay")
         end
-        
-        -- Debug: Always log overlay flags when MCM is open
-        if ExtraHUD.MCMCompat_displayingOverlay ~= "" or ExtraHUD.MCMCompat_selectedOverlay ~= "" then
-            Isaac.DebugString("[CoopExtraHUD] MCM Overlay flags - Displaying: '" .. ExtraHUD.MCMCompat_displayingOverlay .. "', Selected: '" .. ExtraHUD.MCMCompat_selectedOverlay .. "'")
-        else
-            -- Debug: Log that MCM is open but no overlays are active (every 60 frames to reduce spam)
-            if debugFrameCounter % 60 == 1 then
-                Isaac.DebugString("[CoopExtraHUD] MCM is open but no overlay flags set")
-            end
-        end
-    else
-        -- Debug: Log overlay flags even when MCM is closed (for manual toggle testing)
-        if ExtraHUD.MCMCompat_displayingOverlay ~= "" or ExtraHUD.MCMCompat_selectedOverlay ~= "" then
-            Isaac.DebugString("[CoopExtraHUD] Overlay flags active (MCM closed) - Displaying: '" .. ExtraHUD.MCMCompat_displayingOverlay .. "', Selected: '" .. ExtraHUD.MCMCompat_selectedOverlay .. "'")
-            
-            -- Allow manual overlays even when MCM is closed (for testing)
-            if ExtraHUD.MCMCompat_displayingOverlay == "boundary" and ExtraHUD.MCMCompat_selectedOverlay == "boundary" then
-                showBoundary = true
-                Isaac.DebugString("[CoopExtraHUD] Rendering manual boundary overlay")
-            elseif ExtraHUD.MCMCompat_displayingOverlay == "minimap" and ExtraHUD.MCMCompat_selectedOverlay == "minimap" then
-                showMinimap = true
-                Isaac.DebugString("[CoopExtraHUD] Rendering manual minimap overlay")
-            elseif ExtraHUD.MCMCompat_displayingOverlay == "hudoffset" and ExtraHUD.MCMCompat_selectedOverlay == "hudoffset" then
-                showHudOffset = true
-                Isaac.DebugString("[CoopExtraHUD] Rendering manual HUD offset overlay")
-            end
-        end
-        
-        -- Don't clear overlay flags when MCM is closed (allow manual testing)
-        -- if ExtraHUD.MCMCompat_displayingOverlay ~= "" or ExtraHUD.MCMCompat_selectedOverlay ~= "" then
-        --     ExtraHUD.MCMCompat_displayingOverlay = ""
-        --     ExtraHUD.MCMCompat_selectedOverlay = ""
-        -- end
     end
+    
     -- Draw overlays as needed (now using proper sprites with color coding)
     if showBoundary then
         -- Use live config for overlay rendering to ensure real-time updates
@@ -1135,9 +1121,8 @@ end, CallbackPriority and CallbackPriority.EARLY or nil)
 local MCMModule = include("MCM")
 if MCMModule and type(MCMModule.Init) == "function" then
     MCM = MCMModule
-    Isaac.DebugString("[CoopExtraHUD] Loaded MCM module.")
 else
-    Isaac.DebugString("[CoopExtraHUD] Failed to load MCM module.")
+    print("[CoopExtraHUD] Failed to load MCM module.")
 end
 
 -- Isaac best practice: MCM integration at mod load time
@@ -1204,5 +1189,4 @@ do
     end
 end
 
--- Final verification: Isaac modding standards compliance maintained
-Isaac.DebugString("[CoopExtraHUD] *** MOD LOADING COMPLETE ***")
+-- Mod loading complete

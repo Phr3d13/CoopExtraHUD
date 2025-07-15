@@ -1,8 +1,8 @@
 -- MCM.lua: Mod Config Menu logic for CoopExtraHUD
 -- This file contains all MCM registration, option helpers, and overlay flag logic.
 --
--- OVERLAY SYSTEM: Uses manual toggle switches for overlay helpers.
--- Toggle switches in MCM set flags in main.lua that trigger custom overlay rendering
+-- OVERLAY SYSTEM: Uses EID-style automatic overlay detection.
+-- Overlays automatically appear when viewing relevant MCM tabs (HUD, Boundaries, Minimap)
 -- with color-coded corner markers for each overlay type (red=boundary, cyan=minimap, green=HUD offset).
 
 local M = {}
@@ -19,6 +19,12 @@ function M.Init(args)
     SaveConfig = args.SaveConfig
     LoadConfig = args.LoadConfig
     UpdateCurrentPreset = args.UpdateCurrentPreset
+    
+    -- Initialize the MCM tab tracking variable
+    if ExtraHUD then
+        ExtraHUD.MCMCompat_displayingEIDTab = ""
+    end
+    
     return {
         config = config,
         configPresets = configPresets,
@@ -48,7 +54,16 @@ function M.RegisterConfigMenu()
     ModConfigMenu.AddSetting(MOD, "Presets", {
         Type = ModConfigMenu.OptionType.BOOLEAN,
         CurrentSetting = function() return config.hudMode end,
-        Display = function() return "HUD Mode: " .. (config.hudMode and "Vanilla+" or "Updated") end,
+        Display = function() 
+            -- Clear overlay when viewing categories that don't need helpers
+            if ExtraHUD then
+                ExtraHUD.MCMCompat_displayingEIDTab = ""
+                -- Immediately clear overlay flags too
+                ExtraHUD.MCMCompat_displayingOverlay = ""
+                ExtraHUD.MCMCompat_selectedOverlay = ""
+            end
+            return "HUD Mode: " .. (config.hudMode and "Vanilla+" or "Updated") 
+        end,
         Info = "Choose between Updated (modern look) and Vanilla+ (classic look) HUD styles. Each mode has different default values for scale, spacing, and positioning.",
         OnChange = function(v)
             config.hudMode = v
@@ -127,76 +142,117 @@ function M.RegisterConfigMenu()
 
     -- Scale and Opacity at the top
     addNum("scale", function() return math.floor(config.scale * 100) end,
-        function() return "HUD Scale: " .. math.floor(config.scale * 100) .. "%" end,
+        function() 
+            -- Clear overlay when viewing categories that don't need helpers
+            if ExtraHUD then
+                ExtraHUD.MCMCompat_displayingEIDTab = ""
+                -- Immediately clear overlay flags too
+                ExtraHUD.MCMCompat_displayingOverlay = ""
+                ExtraHUD.MCMCompat_selectedOverlay = ""
+            end
+            return "HUD Scale: " .. math.floor(config.scale * 100) .. "%" 
+        end,
         20, 100, 5, function(v) config.scale = v / 100; UpdateCurrentPreset(); SaveConfig() end,
         "Controls the overall size of all HUD elements. Smaller values make the HUD more compact.")
     addNum("opacity", function() return math.floor(config.opacity * 100) end,
-        function() return "HUD Opacity: " .. math.floor(config.opacity * 100) .. "%" end,
+        function() 
+            -- Clear overlay when viewing categories that don't need helpers
+            if ExtraHUD then
+                ExtraHUD.MCMCompat_displayingEIDTab = ""
+                -- Immediately clear overlay flags too
+                ExtraHUD.MCMCompat_displayingOverlay = ""
+                ExtraHUD.MCMCompat_selectedOverlay = ""
+            end
+            return "HUD Opacity: " .. math.floor(config.opacity * 100) .. "%" 
+        end,
         0, 100, 5, function(v) config.opacity = v / 100; UpdateCurrentPreset(); SaveConfig() end,
         "Controls the transparency of the HUD. Lower values make the HUD more see-through.")
 
     -- Spacing section
     ModConfigMenu.AddTitle(MOD, "Display", "Spacing")
     addNum("xSpacing", function() return config.xSpacing end,
-        function() return "X Spacing: " .. config.xSpacing end,
+        function() 
+            -- Clear overlay when viewing categories that don't need helpers
+            if ExtraHUD then
+                ExtraHUD.MCMCompat_displayingEIDTab = ""
+                -- Immediately clear overlay flags too
+                ExtraHUD.MCMCompat_displayingOverlay = ""
+                ExtraHUD.MCMCompat_selectedOverlay = ""
+            end
+            return "X Spacing: " .. config.xSpacing 
+        end,
         0, 50, 1, function(v) config.xSpacing = v; UpdateCurrentPreset(); SaveConfig() end,
         "Horizontal spacing between item icons. Higher values spread items further apart horizontally.")
     addNum("ySpacing", function() return config.ySpacing end,
-        function() return "Y Spacing: " .. config.ySpacing end,
+        function() 
+            -- Clear overlay when viewing categories that don't need helpers
+            if ExtraHUD then
+                ExtraHUD.MCMCompat_displayingEIDTab = ""
+                -- Immediately clear overlay flags too
+                ExtraHUD.MCMCompat_displayingOverlay = ""
+                ExtraHUD.MCMCompat_selectedOverlay = ""
+            end
+            return "Y Spacing: " .. config.ySpacing 
+        end,
         0, 50, 1, function(v) config.ySpacing = v; UpdateCurrentPreset(); SaveConfig() end,
         "Vertical spacing between item rows. Higher values spread rows further apart vertically.")
 
     -- Divider section
     ModConfigMenu.AddTitle(MOD, "Display", "Divider")
     addNum("dividerOffset", function() return config.dividerOffset end,
-        function() return "Divider X Offset: " .. config.dividerOffset end,
+        function() 
+            -- Clear overlay when viewing categories that don't need helpers
+            if ExtraHUD then
+                ExtraHUD.MCMCompat_displayingEIDTab = ""
+                -- Immediately clear overlay flags too
+                ExtraHUD.MCMCompat_displayingOverlay = ""
+                ExtraHUD.MCMCompat_selectedOverlay = ""
+            end
+            return "Divider X Offset: " .. config.dividerOffset 
+        end,
         -200, 200, 5, function(v) config.dividerOffset = v; UpdateCurrentPreset(); SaveConfig() end,
         "Horizontal offset of the divider line between players. Negative values move it left, positive values move it right.")
     addNum("dividerYOffset", function() return config.dividerYOffset end,
-        function() return "Divider Y Offset: " .. config.dividerYOffset end,
+        function() 
+            -- Clear overlay when viewing categories that don't need helpers
+            if ExtraHUD then
+                ExtraHUD.MCMCompat_displayingEIDTab = ""
+                -- Immediately clear overlay flags too
+                ExtraHUD.MCMCompat_displayingOverlay = ""
+                ExtraHUD.MCMCompat_selectedOverlay = ""
+            end
+            return "Divider Y Offset: " .. config.dividerYOffset 
+        end,
         -200, 200, 5, function(v) config.dividerYOffset = v; UpdateCurrentPreset(); SaveConfig() end,
         "Vertical offset of the divider line between players. Negative values move it up, positive values move it down.")
 
-    -- Offset section
-    ModConfigMenu.AddTitle(MOD, "Display", "Offset")
+    -- HUD Category (separate from Display for automatic overlay)
+    ModConfigMenu.AddSpace(MOD, "HUD")
+    ModConfigMenu.AddTitle(MOD, "HUD", "HUD Position")
     
-    -- HUD X Offset setting (no automatic overlay)
+    -- HUD X Offset setting (automatic overlay when on this tab)
     addNum("xOffset", function() return config.xOffset end,
-        function() return "HUD X Offset: " .. config.xOffset end,
-        -200, 200, 5, function(v) config.xOffset = v; UpdateCurrentPreset(); SaveConfig() end,
-        "Overall horizontal position offset of the entire HUD. Negative values move it left, positive values move it right.")
-    
-    -- HUD Y Offset setting (no automatic overlay)
-    addNum("yOffset", function() return config.yOffset end,
-        function() return "HUD Y Offset: " .. config.yOffset end,
-        -200, 200, 5, function(v) config.yOffset = v; UpdateCurrentPreset(); SaveConfig() end,
-        "Overall vertical position offset of the entire HUD. Negative values move it up, positive values move it down.")
-    
-    -- Add overlay helper for HUD offset (toggle switch)
-    ModConfigMenu.AddSetting(MOD, "Display", {
-        Type = ModConfigMenu.OptionType.BOOLEAN,
-        CurrentSetting = function() 
-            return ExtraHUD and ExtraHUD.MCMCompat_displayingOverlay == "hudoffset" 
-        end,
-        Display = function() return "Show HUD Position Overlay" end,
-        Info = "Toggle to show/hide the HUD position overlay with yellow corner markers.",
-        OnChange = function(v)
-            Isaac.DebugString("[CoopExtraHUD] HUD Position Overlay toggle called: " .. tostring(v))
+        function() 
+            -- Auto-show HUD offset overlay when adjusting these settings
             if ExtraHUD then
-                if v then
-                    ExtraHUD.MCMCompat_displayingOverlay = "hudoffset"
-                    ExtraHUD.MCMCompat_selectedOverlay = "hudoffset"
-                    Isaac.DebugString("[CoopExtraHUD] HUD offset overlay enabled via toggle")
-                else
-                    ExtraHUD.MCMCompat_displayingOverlay = ""
-                    ExtraHUD.MCMCompat_selectedOverlay = ""
-                    Isaac.DebugString("[CoopExtraHUD] HUD offset overlay disabled via toggle")
-                end
-            else
-                Isaac.DebugString("[CoopExtraHUD] ERROR: ExtraHUD not available in toggle")
+                ExtraHUD.MCMCompat_displayingEIDTab = "HUD"
             end
+            return "HUD X Offset: " .. config.xOffset 
         end,
-    })
+        -200, 200, 5, function(v) config.xOffset = v; UpdateCurrentPreset(); SaveConfig() end,
+        "Overall horizontal position offset of the entire HUD. Negative values move it left, positive values move it right.", "HUD")
+    
+    -- HUD Y Offset setting (automatic overlay when on this tab)
+    addNum("yOffset", function() return config.yOffset end,
+        function() 
+            -- Auto-show HUD offset overlay when adjusting these settings
+            if ExtraHUD then
+                ExtraHUD.MCMCompat_displayingEIDTab = "HUD"
+            end
+            return "HUD Y Offset: " .. config.yOffset 
+        end,
+        -200, 200, 5, function(v) config.yOffset = v; UpdateCurrentPreset(); SaveConfig() end,
+        "Overall vertical position offset of the entire HUD. Negative values move it up, positive values move it down.", "HUD")
 
     -- Boundaries Category
     ModConfigMenu.AddSpace(MOD, "Boundaries")
@@ -210,39 +266,22 @@ function M.RegisterConfigMenu()
     }
     for _, opt in ipairs(boundaryOptions) do
         addNum(opt.key, function() return config[opt.key] end,
-            function() return opt.name .. ": " .. config[opt.key] end,
+            function() 
+                -- Auto-show boundary overlay when adjusting boundary settings
+                if ExtraHUD then
+                    ExtraHUD.MCMCompat_displayingEIDTab = "Boundaries"
+                end
+                return opt.name .. ": " .. config[opt.key] 
+            end,
             opt.min, opt.max, opt.step, function(v) config[opt.key] = v; UpdateCurrentPreset(); SaveConfig() end,
             opt.info, "Boundaries")
     end
-    
-    -- Add overlay helper for boundary (toggle switch)
-    ModConfigMenu.AddSetting(MOD, "Boundaries", {
-        Type = ModConfigMenu.OptionType.BOOLEAN,
-        CurrentSetting = function() 
-            return ExtraHUD and ExtraHUD.MCMCompat_displayingOverlay == "boundary" 
-        end,
-        Display = function() return "Show Boundary Overlay" end,
-        Info = "Toggle to show/hide the HUD boundary area overlay with red corner markers.",
-        OnChange = function(v)
-            if ExtraHUD then
-                if v then
-                    ExtraHUD.MCMCompat_displayingOverlay = "boundary"
-                    ExtraHUD.MCMCompat_selectedOverlay = "boundary"
-                    Isaac.DebugString("[CoopExtraHUD] Boundary overlay enabled via toggle")
-                else
-                    ExtraHUD.MCMCompat_displayingOverlay = ""
-                    ExtraHUD.MCMCompat_selectedOverlay = ""
-                    Isaac.DebugString("[CoopExtraHUD] Boundary overlay disabled via toggle")
-                end
-            end
-        end,
-    })
-    -- Minimap Avoidance section
-    ModConfigMenu.AddSpace(MOD, "Boundaries")
-    ModConfigMenu.AddTitle(MOD, "Boundaries", "Minimap Avoidance Area")
+    -- Minimap Category (separate from Boundaries for automatic overlay)
+    ModConfigMenu.AddSpace(MOD, "Minimap")
+    ModConfigMenu.AddTitle(MOD, "Minimap", "Minimap Avoidance Area")
     -- Add auto-align as a button-like toggle (like resetFlag)
     local minimapAutoAlignFlag = false
-    ModConfigMenu.AddSetting(MOD, "Boundaries", {
+    ModConfigMenu.AddSetting(MOD, "Minimap", {
         Type = ModConfigMenu.OptionType.BOOLEAN,
         CurrentSetting = function() return minimapAutoAlignFlag end,
         Display = function() return "Auto-Align Minimap (Top-Right)" end,
@@ -266,40 +305,32 @@ function M.RegisterConfigMenu()
     }
     for _, opt in ipairs(minimapOptions) do
         addNum(opt.key, function() return config[opt.key] end,
-            function() return opt.name .. ": " .. config[opt.key] end,
-            opt.min, opt.max, opt.step, function(v) config[opt.key] = v; UpdateCurrentPreset(); SaveConfig() end,
-            opt.info, "Boundaries")
-    end
-    
-    -- Add overlay helper for minimap (toggle switch)
-    ModConfigMenu.AddSetting(MOD, "Boundaries", {
-        Type = ModConfigMenu.OptionType.BOOLEAN,
-        CurrentSetting = function() 
-            return ExtraHUD and ExtraHUD.MCMCompat_displayingOverlay == "minimap" 
-        end,
-        Display = function() return "Show Minimap Overlay" end,
-        Info = "Toggle to show/hide the minimap avoidance area overlay with cyan corner markers.",
-        OnChange = function(v)
-            if ExtraHUD then
-                if v then
-                    ExtraHUD.MCMCompat_displayingOverlay = "minimap"
-                    ExtraHUD.MCMCompat_selectedOverlay = "minimap"
-                    Isaac.DebugString("[CoopExtraHUD] Minimap overlay enabled via toggle")
-                else
-                    ExtraHUD.MCMCompat_displayingOverlay = ""
-                    ExtraHUD.MCMCompat_selectedOverlay = ""
-                    Isaac.DebugString("[CoopExtraHUD] Minimap overlay disabled via toggle")
+            function() 
+                -- Auto-show minimap overlay when adjusting minimap settings
+                if ExtraHUD then
+                    ExtraHUD.MCMCompat_displayingEIDTab = "Minimap"
                 end
-            end
-        end,
-    })
+                return opt.name .. ": " .. config[opt.key] 
+            end,
+            opt.min, opt.max, opt.step, function(v) config[opt.key] = v; UpdateCurrentPreset(); SaveConfig() end,
+            opt.info, "Minimap")
+    end
     -- Debug Category (renamed from Debugging)
     ModConfigMenu.AddSpace(MOD, "Debug")
     ModConfigMenu.AddTitle(MOD, "Debug", "Debug")
     ModConfigMenu.AddSetting(MOD, "Debug", {
         Type = ModConfigMenu.OptionType.BOOLEAN,
         CurrentSetting = function() return config.debugOverlay end,
-        Display = function() return "Debug Overlay: " .. (config.debugOverlay and "ON" or "OFF") end,
+        Display = function() 
+            -- Clear overlay when viewing categories that don't need helpers
+            if ExtraHUD then
+                ExtraHUD.MCMCompat_displayingEIDTab = ""
+                -- Immediately clear overlay flags too
+                ExtraHUD.MCMCompat_displayingOverlay = ""
+                ExtraHUD.MCMCompat_selectedOverlay = ""
+            end
+            return "Debug Overlay: " .. (config.debugOverlay and "ON" or "OFF") 
+        end,
         Info = "Shows visual overlays with colored corner markers indicating the HUD boundary (red), minimap area (cyan), and actual HUD position (green). Useful for positioning and troubleshooting.",
         OnChange = function(v)
             config.debugOverlay = v; UpdateCurrentPreset(); SaveConfig();
