@@ -45,6 +45,7 @@ function M.RegisterConfigMenu()
         Type = ModConfigMenu.OptionType.BOOLEAN,
         CurrentSetting = function() return config.hudMode end,
         Display = function() return "HUD Mode: " .. (config.hudMode and "Vanilla+" or "Updated") end,
+        Info = "Choose between Updated (modern look) and Vanilla+ (classic look) HUD styles. Each mode has different default values for scale, spacing, and positioning.",
         OnChange = function(v)
             config.hudMode = v
             -- Apply preset values when toggled
@@ -66,6 +67,7 @@ function M.RegisterConfigMenu()
         Type = ModConfigMenu.OptionType.BOOLEAN,
         CurrentSetting = function() return resetFlag end,
         Display = function() return "Reset Current Preset to Defaults" end,
+        Info = "Resets all display settings (scale, spacing, divider, offset, opacity) to their default values for the currently selected HUD mode.",
         OnChange = function(v)
             if v then
                 local defaults = {
@@ -87,10 +89,11 @@ function M.RegisterConfigMenu()
     })
 
     -- Display Category (renamed from Display Options)
-    local addNum = function(name, cur, disp, min, max, step, onchg)
+    local addNum = function(name, cur, disp, min, max, step, onchg, info)
         ModConfigMenu.AddSetting(MOD, "Display", {
             Type = ModConfigMenu.OptionType.NUMBER,
             CurrentSetting = cur, Display = disp, 
+            Info = info,
             OnChange = function(v) 
                 onchg(v)
                 -- Invalidate caches so HUD updates immediately
@@ -106,37 +109,45 @@ function M.RegisterConfigMenu()
     -- Scale and Opacity at the top
     addNum("scale", function() return math.floor(config.scale * 100) end,
         function() return "HUD Scale: " .. math.floor(config.scale * 100) .. "%" end,
-        20, 100, 5, function(v) config.scale = v / 100; UpdateCurrentPreset(); SaveConfig() end)
+        20, 100, 5, function(v) config.scale = v / 100; UpdateCurrentPreset(); SaveConfig() end,
+        "Controls the overall size of all HUD elements. Smaller values make the HUD more compact.")
     addNum("opacity", function() return math.floor(config.opacity * 100) end,
         function() return "HUD Opacity: " .. math.floor(config.opacity * 100) .. "%" end,
-        0, 100, 5, function(v) config.opacity = v / 100; UpdateCurrentPreset(); SaveConfig() end)
+        0, 100, 5, function(v) config.opacity = v / 100; UpdateCurrentPreset(); SaveConfig() end,
+        "Controls the transparency of the HUD. Lower values make the HUD more see-through.")
 
     -- Spacing section
     ModConfigMenu.AddTitle(MOD, "Display", "Spacing")
     addNum("xSpacing", function() return config.xSpacing end,
         function() return "X Spacing: " .. config.xSpacing end,
-        0, 50, 1, function(v) config.xSpacing = v; UpdateCurrentPreset(); SaveConfig() end)
+        0, 50, 1, function(v) config.xSpacing = v; UpdateCurrentPreset(); SaveConfig() end,
+        "Horizontal spacing between item icons. Higher values spread items further apart horizontally.")
     addNum("ySpacing", function() return config.ySpacing end,
         function() return "Y Spacing: " .. config.ySpacing end,
-        0, 50, 1, function(v) config.ySpacing = v; UpdateCurrentPreset(); SaveConfig() end)
+        0, 50, 1, function(v) config.ySpacing = v; UpdateCurrentPreset(); SaveConfig() end,
+        "Vertical spacing between item rows. Higher values spread rows further apart vertically.")
 
     -- Divider section
     ModConfigMenu.AddTitle(MOD, "Display", "Divider")
     addNum("dividerOffset", function() return config.dividerOffset end,
         function() return "Divider X Offset: " .. config.dividerOffset end,
-        -200, 200, 5, function(v) config.dividerOffset = v; UpdateCurrentPreset(); SaveConfig() end)
+        -200, 200, 5, function(v) config.dividerOffset = v; UpdateCurrentPreset(); SaveConfig() end,
+        "Horizontal offset of the divider line between players. Negative values move it left, positive values move it right.")
     addNum("dividerYOffset", function() return config.dividerYOffset end,
         function() return "Divider Y Offset: " .. config.dividerYOffset end,
-        -200, 200, 5, function(v) config.dividerYOffset = v; UpdateCurrentPreset(); SaveConfig() end)
+        -200, 200, 5, function(v) config.dividerYOffset = v; UpdateCurrentPreset(); SaveConfig() end,
+        "Vertical offset of the divider line between players. Negative values move it up, positive values move it down.")
 
     -- Offset section
     ModConfigMenu.AddTitle(MOD, "Display", "Offset")
     addNum("xOffset", function() return config.xOffset end,
         function() return "HUD X Offset: " .. config.xOffset end,
-        -200, 200, 5, function(v) config.xOffset = v; UpdateCurrentPreset(); SaveConfig() end)
+        -200, 200, 5, function(v) config.xOffset = v; UpdateCurrentPreset(); SaveConfig() end,
+        "Overall horizontal position offset of the entire HUD. Negative values move it left, positive values move it right.")
     addNum("yOffset", function() return config.yOffset end,
         function() return "HUD Y Offset: " .. config.yOffset end,
-        -200, 200, 5, function(v) config.yOffset = v; UpdateCurrentPreset(); SaveConfig() end)
+        -200, 200, 5, function(v) config.yOffset = v; UpdateCurrentPreset(); SaveConfig() end,
+        "Overall vertical position offset of the entire HUD. Negative values move it up, positive values move it down.")
 
     -- Boundaries Category
     ModConfigMenu.AddSpace(MOD, "Boundaries")
@@ -146,6 +157,7 @@ function M.RegisterConfigMenu()
         Type = ModConfigMenu.OptionType.BOOLEAN,
         CurrentSetting = function() return false end,
         Display = function() return "Clear Overlay Helper" end,
+        Info = "Clears any currently displayed overlay helpers. Use this if an overlay gets stuck on screen.",
         OnChange = function(v)
             if v and ExtraHUD then
                 ExtraHUD.MCMCompat_displayingOverlay = ""
@@ -252,10 +264,10 @@ function M.RegisterConfigMenu()
     end
     -- Ensure OnLeave = clearOverlayFlag for all boundary overlay options
     local boundaryOptions = {
-        { name = "Boundary X", key = "boundaryX", min = 0, max = 3840, step = 1 },
-        { name = "Boundary Y", key = "boundaryY", min = 0, max = 2160, step = 1 },
-        { name = "Boundary Width", key = "boundaryW", min = 32, max = 3840, step = 1 },
-        { name = "Boundary Height", key = "boundaryH", min = 32, max = 2160, step = 1 },
+        { name = "Boundary X", key = "boundaryX", min = 0, max = 3840, step = 1, info = "Left edge of the HUD boundary area. The HUD will be positioned within this boundary." },
+        { name = "Boundary Y", key = "boundaryY", min = 0, max = 2160, step = 1, info = "Top edge of the HUD boundary area. The HUD will be positioned within this boundary." },
+        { name = "Boundary Width", key = "boundaryW", min = 32, max = 3840, step = 1, info = "Width of the HUD boundary area. Make this larger to give the HUD more horizontal space." },
+        { name = "Boundary Height", key = "boundaryH", min = 32, max = 2160, step = 1, info = "Height of the HUD boundary area. Make this larger to give the HUD more vertical space." },
     }
     for _, opt in ipairs(boundaryOptions) do
         ModConfigMenu.AddSetting(MOD, "Boundaries", {
@@ -264,6 +276,7 @@ function M.RegisterConfigMenu()
             Display = function()
                 return opt.name .. ": " .. config[opt.key]
             end,
+            Info = opt.info,
             OnChange = function(v)
                 config[opt.key] = v; UpdateCurrentPreset(); SaveConfig();
                 if ExtraHUD then
@@ -297,6 +310,7 @@ function M.RegisterConfigMenu()
         Type = ModConfigMenu.OptionType.BOOLEAN,
         CurrentSetting = function() return minimapAutoAlignFlag end,
         Display = function() return "Auto-Align Minimap (Top-Right)" end,
+        Info = "Automatically sets the minimap position to the top-right corner of the screen. This helps ensure the HUD avoids the minimap correctly.",
         OnChange = function(v)
             if v then
                 config.minimapX = -1
@@ -311,10 +325,10 @@ function M.RegisterConfigMenu()
     -- setMinimapOverlayFlag is now defined above with correct overlay type
     -- Ensure OnLeave = clearOverlayFlag for all minimap overlay options
     local minimapOptions = {
-        { name = "Minimap X", key = "minimapX", min = 0, max = 3840, step = 1 },
-        { name = "Minimap Y", key = "minimapY", min = 0, max = 2160, step = 1 },
-        { name = "Minimap Width", key = "minimapW", min = 0, max = 3840, step = 1 },
-        { name = "Minimap Height", key = "minimapH", min = 0, max = 2160, step = 1 },
+        { name = "Minimap X", key = "minimapX", min = 0, max = 3840, step = 1, info = "Left edge of the minimap area. The HUD will avoid overlapping with this area." },
+        { name = "Minimap Y", key = "minimapY", min = 0, max = 2160, step = 1, info = "Top edge of the minimap area. The HUD will avoid overlapping with this area." },
+        { name = "Minimap Width", key = "minimapW", min = 0, max = 3840, step = 1, info = "Width of the minimap area that the HUD should avoid overlapping." },
+        { name = "Minimap Height", key = "minimapH", min = 0, max = 2160, step = 1, info = "Height of the minimap area that the HUD should avoid overlapping." },
     }
     for _, opt in ipairs(minimapOptions) do
         ModConfigMenu.AddSetting(MOD, "Boundaries", {
@@ -323,6 +337,7 @@ function M.RegisterConfigMenu()
             Display = function()
                 return opt.name .. ": " .. config[opt.key]
             end,
+            Info = opt.info,
             OnChange = function(v)
                 config[opt.key] = v; UpdateCurrentPreset(); SaveConfig();
                 if ExtraHUD then
@@ -353,7 +368,8 @@ function M.RegisterConfigMenu()
     ModConfigMenu.AddSetting(MOD, "Debug", {
         Type = ModConfigMenu.OptionType.BOOLEAN,
         CurrentSetting = function() return config.debugOverlay end,
-        Display = function() return "Debug Overlay: " .. (config.debugOverlay and "On" or "Off") end,
+        Display = function() return "Debug Overlay: " .. (config.debugOverlay and "ON" or "OFF") end,
+        Info = "Shows visual overlays with colored corner markers indicating the HUD boundary (red), minimap area (cyan), and actual HUD position (green). Useful for positioning and troubleshooting.",
         OnChange = function(v)
             config.debugOverlay = v; UpdateCurrentPreset(); SaveConfig();
             if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
