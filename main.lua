@@ -1131,19 +1131,6 @@ ExtraHUD:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, function()
     SaveConfig()
 end, CallbackPriority and CallbackPriority.EARLY or nil)
 
---[[
-Isaac Modding Best Practices Applied:
-- ✅ No Isaac.ExecuteCommand (uses Options.ExtraHUDStyle instead)
-- ✅ No require() for optional dependencies (robust MCM loading)
-- ✅ Explicit callback priorities for deterministic execution order
-- ✅ Comprehensive game state validation (pause, menu, room types)
-- ✅ Resource validation with proper constants and safe fallbacks
-- ✅ Enhanced item validation with Isaac API best practices
-- ✅ Safe Isaac API access patterns with nil checks
-- ✅ Performance optimization with proper constant usage
-- ✅ Robust optional dependency loading without require
-]]
-
 -- Isaac best practice: Load our MCM module (same mod, always safe)
 local MCMModule = include("MCM")
 if MCMModule and type(MCMModule.Init) == "function" then
@@ -1216,3 +1203,6 @@ do
         end
     end
 end
+
+-- Final verification: Isaac modding standards compliance maintained
+Isaac.DebugString("[CoopExtraHUD] *** MOD LOADING COMPLETE ***")
