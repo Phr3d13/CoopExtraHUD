@@ -1,5 +1,9 @@
 -- MCM.lua: Mod Config Menu logic for CoopExtraHUD
 -- This file contains all MCM registration, option helpers, and overlay flag logic.
+--
+-- OVERLAY SYSTEM: Uses manual toggle switches for overlay helpers.
+-- Toggle switches in MCM set flags in main.lua that trigger custom overlay rendering
+-- with color-coded corner markers for each overlay type (red=boundary, cyan=minimap, green=HUD offset).
 
 local M = {}
 
@@ -88,9 +92,24 @@ function M.RegisterConfigMenu()
         end,
     })
 
+    -- Add auto-adjust on resize option
+    ModConfigMenu.AddSetting(MOD, "Presets", {
+        Type = ModConfigMenu.OptionType.BOOLEAN,
+        CurrentSetting = function() return config.autoAdjustOnResize end,
+        Display = function() return "Auto-Adjust on Resize: " .. (config.autoAdjustOnResize and "ON" or "OFF") end,
+        Info = "Automatically adjusts HUD boundary position when the game window is resized to maintain relative positioning. Helps keep the HUD in the right place across different resolutions.",
+        OnChange = function(v)
+            config.autoAdjustOnResize = v
+            UpdateCurrentPreset()
+            SaveConfig()
+            -- Invalidate caches so HUD updates immediately
+            if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
+        end,
+    })
+
     -- Display Category (renamed from Display Options)
-    local addNum = function(name, cur, disp, min, max, step, onchg, info)
-        ModConfigMenu.AddSetting(MOD, "Display", {
+    local addNum = function(name, cur, disp, min, max, step, onchg, info, category)
+        ModConfigMenu.AddSetting(MOD, category or "Display", {
             Type = ModConfigMenu.OptionType.NUMBER,
             CurrentSetting = cur, Display = disp, 
             Info = info,
@@ -140,167 +159,84 @@ function M.RegisterConfigMenu()
 
     -- Offset section
     ModConfigMenu.AddTitle(MOD, "Display", "Offset")
+    
+    -- HUD X Offset setting (no automatic overlay)
     addNum("xOffset", function() return config.xOffset end,
         function() return "HUD X Offset: " .. config.xOffset end,
         -200, 200, 5, function(v) config.xOffset = v; UpdateCurrentPreset(); SaveConfig() end,
         "Overall horizontal position offset of the entire HUD. Negative values move it left, positive values move it right.")
+    
+    -- HUD Y Offset setting (no automatic overlay)
     addNum("yOffset", function() return config.yOffset end,
         function() return "HUD Y Offset: " .. config.yOffset end,
         -200, 200, 5, function(v) config.yOffset = v; UpdateCurrentPreset(); SaveConfig() end,
         "Overall vertical position offset of the entire HUD. Negative values move it up, positive values move it down.")
-
-    -- Boundaries Category
-    ModConfigMenu.AddSpace(MOD, "Boundaries")
-    -- Add Helper title and Clear Overlay Helper at the very top of Boundaries
-    ModConfigMenu.AddTitle(MOD, "Boundaries", "Helper")
-    ModConfigMenu.AddSetting(MOD, "Boundaries", {
+    
+    -- Add overlay helper for HUD offset (toggle switch)
+    ModConfigMenu.AddSetting(MOD, "Display", {
         Type = ModConfigMenu.OptionType.BOOLEAN,
-        CurrentSetting = function() return false end,
-        Display = function() return "Clear Overlay Helper" end,
-        Info = "Clears any currently displayed overlay helpers. Use this if an overlay gets stuck on screen.",
+        CurrentSetting = function() 
+            return ExtraHUD and ExtraHUD.MCMCompat_displayingOverlay == "hudoffset" 
+        end,
+        Display = function() return "Show HUD Position Overlay" end,
+        Info = "Toggle to show/hide the HUD position overlay with yellow corner markers.",
         OnChange = function(v)
-            if v and ExtraHUD then
-                ExtraHUD.MCMCompat_displayingOverlay = ""
-                ExtraHUD.MCMCompat_selectedOverlay = ""
-                SaveConfig()
+            Isaac.DebugString("[CoopExtraHUD] HUD Position Overlay toggle called: " .. tostring(v))
+            if ExtraHUD then
+                if v then
+                    ExtraHUD.MCMCompat_displayingOverlay = "hudoffset"
+                    ExtraHUD.MCMCompat_selectedOverlay = "hudoffset"
+                    Isaac.DebugString("[CoopExtraHUD] HUD offset overlay enabled via toggle")
+                else
+                    ExtraHUD.MCMCompat_displayingOverlay = ""
+                    ExtraHUD.MCMCompat_selectedOverlay = ""
+                    Isaac.DebugString("[CoopExtraHUD] HUD offset overlay disabled via toggle")
+                end
+            else
+                Isaac.DebugString("[CoopExtraHUD] ERROR: ExtraHUD not available in toggle")
             end
         end,
     })
+
+    -- Boundaries Category
     ModConfigMenu.AddSpace(MOD, "Boundaries")
     ModConfigMenu.AddTitle(MOD, "Boundaries", "HUD Boundary")
-    -- HUD Boundary section: all settings (no OnUpdate/OnLeave needed)
-    -- Overlay flag logic: only show overlay if BOTH Display and OnSelect match
-    -- Dual-flag overlay logic: display and selected must both match for overlay to show
-    local function setBoundaryOverlayDisplayFlag()
-        if ExtraHUD then
-            ExtraHUD.MCMCompat_displayingOverlay = "boundary"
-        end
-    end
-    local function setMinimapOverlayDisplayFlag()
-        if ExtraHUD then
-            ExtraHUD.MCMCompat_displayingOverlay = "minimap"
-        end
-    end
-    local function setBoundaryOverlayFlag()
-        if ExtraHUD then
-            ExtraHUD.MCMCompat_selectedOverlay = "boundary"
-        end
-        config._mcm_boundary_overlay_refresh = (config._mcm_boundary_overlay_refresh or 0) + 1
-    end
-    local function setMinimapOverlayFlag()
-        if ExtraHUD then
-            ExtraHUD.MCMCompat_selectedOverlay = "minimap"
-        end
-        config._mcm_map_overlay_refresh = (config._mcm_map_overlay_refresh or 0) + 1
-    end
-    local function clearOverlayFlag()
-        if ExtraHUD then
-            ExtraHUD.MCMCompat_selectedOverlay = nil
-        end
-    end
-
-    -- Extra: Clear overlay flag when switching category, tab, or option (robust for all MCM versions)
-    -- 1. Category change
-    if ModConfigMenu.AddCategoryCallback then
-        ModConfigMenu.AddCategoryCallback(MOD, function()
-            clearOverlayFlag()
-        end)
-    end
-    if ModConfigMenu.AddTabCallback then
-        ModConfigMenu.AddTabCallback(MOD, function()
-            clearOverlayFlag()
-        end)
-    end
-    -- 3. Option change: patch all OnSelect/OnLeave for all settings in Display category
-    -- This ensures that leaving any option (not just boundary/minimap) clears the overlay flag
-    local oldAddSetting = ModConfigMenu.AddSetting
-    ModConfigMenu.AddSetting = function(mod, category, setting)
-        if mod == MOD and category == "Display" then
-            local origOnSelect = setting.OnSelect
-            local origOnLeave = setting.OnLeave
-            local isOverlayOption = false
-            if setting.Display and type(setting.Display) == "function" then
-                local disp = setting.Display()
-                if disp:find("Boundary") or disp:find("Minimap") then
-                    isOverlayOption = true
-                end
-            end
-            setting.OnSelect = function(...)
-                if origOnSelect then origOnSelect(...) end
-                if not isOverlayOption then
-                    clearOverlayFlag()
-                end
-            end
-            setting.OnLeave = function(...)
-                if origOnLeave then origOnLeave(...) end
-                clearOverlayFlag()
-            end
-        end
-        return oldAddSetting(mod, category, setting)
-    end
-
-    -- Force clear overlay flag on every frame while in MCM unless a boundary/minimap option is actively selected
-    -- This is a workaround for MCM not always calling OnLeave reliably
-    if ModConfigMenu.AddUpdateCallback then
-        ModConfigMenu.AddUpdateCallback(MOD, function()
-            -- If the selected overlay is set, but the currently focused option is not a boundary/minimap option, clear it
-            local shouldClear = false
-            if ExtraHUD and ExtraHUD.MCMCompat_selectedOverlay then
-                local mcm = _G.ModConfigMenu
-                local cur = mcm and mcm.CurrentSetting and mcm.CurrentSetting[MOD] and mcm.CurrentSetting[MOD]["Display"]
-                if cur and cur.Display and type(cur.Display) == "function" then
-                    local disp = cur.Display()
-                    if not (disp:find("Boundary") or disp:find("Minimap")) then
-                        shouldClear = true
-                    end
-                else
-                    shouldClear = true
-                end
-            end
-            if ExtraHUD and ExtraHUD.MCMCompat_selectedOverlay and shouldClear then
-                clearOverlayFlag()
-            end
-        end)
-    end
-    -- Ensure OnLeave = clearOverlayFlag for all boundary overlay options
+    
     local boundaryOptions = {
-        { name = "Boundary X", key = "boundaryX", min = 0, max = 3840, step = 1, info = "Left edge of the HUD boundary area. The HUD will be positioned within this boundary." },
-        { name = "Boundary Y", key = "boundaryY", min = 0, max = 2160, step = 1, info = "Top edge of the HUD boundary area. The HUD will be positioned within this boundary." },
-        { name = "Boundary Width", key = "boundaryW", min = 32, max = 3840, step = 1, info = "Width of the HUD boundary area. Make this larger to give the HUD more horizontal space." },
-        { name = "Boundary Height", key = "boundaryH", min = 32, max = 2160, step = 1, info = "Height of the HUD boundary area. Make this larger to give the HUD more vertical space." },
+        { name = "Boundary X", key = "boundaryX", min = 0, max = 640, step = 1, info = "Left edge of the HUD boundary area. The HUD will be positioned within this boundary." },
+        { name = "Boundary Y", key = "boundaryY", min = 0, max = 480, step = 1, info = "Top edge of the HUD boundary area. The HUD will be positioned within this boundary." },
+        { name = "Boundary Width", key = "boundaryW", min = 32, max = 640, step = 1, info = "Width of the HUD boundary area. Make this larger to give the HUD more horizontal space." },
+        { name = "Boundary Height", key = "boundaryH", min = 32, max = 480, step = 1, info = "Height of the HUD boundary area. Make this larger to give the HUD more vertical space." },
     }
     for _, opt in ipairs(boundaryOptions) do
-        ModConfigMenu.AddSetting(MOD, "Boundaries", {
-            Type = ModConfigMenu.OptionType.NUMBER,
-            CurrentSetting = function() return config[opt.key] end,
-            Display = function()
-                return opt.name .. ": " .. config[opt.key]
-            end,
-            Info = opt.info,
-            OnChange = function(v)
-                config[opt.key] = v; UpdateCurrentPreset(); SaveConfig();
-                if ExtraHUD then
+        addNum(opt.key, function() return config[opt.key] end,
+            function() return opt.name .. ": " .. config[opt.key] end,
+            opt.min, opt.max, opt.step, function(v) config[opt.key] = v; UpdateCurrentPreset(); SaveConfig() end,
+            opt.info, "Boundaries")
+    end
+    
+    -- Add overlay helper for boundary (toggle switch)
+    ModConfigMenu.AddSetting(MOD, "Boundaries", {
+        Type = ModConfigMenu.OptionType.BOOLEAN,
+        CurrentSetting = function() 
+            return ExtraHUD and ExtraHUD.MCMCompat_displayingOverlay == "boundary" 
+        end,
+        Display = function() return "Show Boundary Overlay" end,
+        Info = "Toggle to show/hide the HUD boundary area overlay with red corner markers.",
+        OnChange = function(v)
+            if ExtraHUD then
+                if v then
                     ExtraHUD.MCMCompat_displayingOverlay = "boundary"
                     ExtraHUD.MCMCompat_selectedOverlay = "boundary"
-                    -- Invalidate caches so overlay updates immediately
-                    if ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
-                end
-            end,
-            OnSelect = function(...)
-                if ExtraHUD then
-                    ExtraHUD.MCMCompat_displayingOverlay = "boundary"
-                    ExtraHUD.MCMCompat_selectedOverlay = "boundary"
-                end
-            end,
-            OnLeave = function(...)
-                if ExtraHUD then
+                    Isaac.DebugString("[CoopExtraHUD] Boundary overlay enabled via toggle")
+                else
                     ExtraHUD.MCMCompat_displayingOverlay = ""
                     ExtraHUD.MCMCompat_selectedOverlay = ""
+                    Isaac.DebugString("[CoopExtraHUD] Boundary overlay disabled via toggle")
                 end
-            end,
-            Minimum = opt.min, Maximum = opt.max, Step = opt.step,
-        })
-    end
+            end
+        end,
+    })
     -- Minimap Avoidance section
     ModConfigMenu.AddSpace(MOD, "Boundaries")
     ModConfigMenu.AddTitle(MOD, "Boundaries", "Minimap Avoidance Area")
@@ -321,47 +257,42 @@ function M.RegisterConfigMenu()
             end
         end,
     })
-    -- Minimap Avoidance section: all settings (no OnUpdate/OnLeave needed)
-    -- setMinimapOverlayFlag is now defined above with correct overlay type
-    -- Ensure OnLeave = clearOverlayFlag for all minimap overlay options
+    
     local minimapOptions = {
-        { name = "Minimap X", key = "minimapX", min = 0, max = 3840, step = 1, info = "Left edge of the minimap area. The HUD will avoid overlapping with this area." },
-        { name = "Minimap Y", key = "minimapY", min = 0, max = 2160, step = 1, info = "Top edge of the minimap area. The HUD will avoid overlapping with this area." },
-        { name = "Minimap Width", key = "minimapW", min = 0, max = 3840, step = 1, info = "Width of the minimap area that the HUD should avoid overlapping." },
-        { name = "Minimap Height", key = "minimapH", min = 0, max = 2160, step = 1, info = "Height of the minimap area that the HUD should avoid overlapping." },
+        { name = "Minimap X", key = "minimapX", min = 0, max = 640, step = 1, info = "Left edge of the minimap area. The HUD will avoid overlapping with this area." },
+        { name = "Minimap Y", key = "minimapY", min = 0, max = 480, step = 1, info = "Top edge of the minimap area. The HUD will avoid overlapping with this area." },
+        { name = "Minimap Width", key = "minimapW", min = 0, max = 640, step = 1, info = "Width of the minimap area that the HUD should avoid overlapping." },
+        { name = "Minimap Height", key = "minimapH", min = 0, max = 480, step = 1, info = "Height of the minimap area that the HUD should avoid overlapping." },
     }
     for _, opt in ipairs(minimapOptions) do
-        ModConfigMenu.AddSetting(MOD, "Boundaries", {
-            Type = ModConfigMenu.OptionType.NUMBER,
-            CurrentSetting = function() return config[opt.key] end,
-            Display = function()
-                return opt.name .. ": " .. config[opt.key]
-            end,
-            Info = opt.info,
-            OnChange = function(v)
-                config[opt.key] = v; UpdateCurrentPreset(); SaveConfig();
-                if ExtraHUD then
+        addNum(opt.key, function() return config[opt.key] end,
+            function() return opt.name .. ": " .. config[opt.key] end,
+            opt.min, opt.max, opt.step, function(v) config[opt.key] = v; UpdateCurrentPreset(); SaveConfig() end,
+            opt.info, "Boundaries")
+    end
+    
+    -- Add overlay helper for minimap (toggle switch)
+    ModConfigMenu.AddSetting(MOD, "Boundaries", {
+        Type = ModConfigMenu.OptionType.BOOLEAN,
+        CurrentSetting = function() 
+            return ExtraHUD and ExtraHUD.MCMCompat_displayingOverlay == "minimap" 
+        end,
+        Display = function() return "Show Minimap Overlay" end,
+        Info = "Toggle to show/hide the minimap avoidance area overlay with cyan corner markers.",
+        OnChange = function(v)
+            if ExtraHUD then
+                if v then
                     ExtraHUD.MCMCompat_displayingOverlay = "minimap"
                     ExtraHUD.MCMCompat_selectedOverlay = "minimap"
-                    -- Invalidate caches so overlay updates immediately
-                    if ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
-                end
-            end,
-            OnSelect = function(...)
-                if ExtraHUD then
-                    ExtraHUD.MCMCompat_displayingOverlay = "minimap"
-                    ExtraHUD.MCMCompat_selectedOverlay = "minimap"
-                end
-            end,
-            OnLeave = function(...)
-                if ExtraHUD then
+                    Isaac.DebugString("[CoopExtraHUD] Minimap overlay enabled via toggle")
+                else
                     ExtraHUD.MCMCompat_displayingOverlay = ""
                     ExtraHUD.MCMCompat_selectedOverlay = ""
+                    Isaac.DebugString("[CoopExtraHUD] Minimap overlay disabled via toggle")
                 end
-            end,
-            Minimum = opt.min, Maximum = opt.max, Step = opt.step,
-        })
-    end
+            end
+        end,
+    })
     -- Debug Category (renamed from Debugging)
     ModConfigMenu.AddSpace(MOD, "Debug")
     ModConfigMenu.AddTitle(MOD, "Debug", "Debug")

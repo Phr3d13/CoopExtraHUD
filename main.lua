@@ -1,5 +1,7 @@
-
 local ExtraHUD = RegisterMod("CoopExtraHUD", 1)
+
+-- IMMEDIATE DEBUG: Test if mod is loading at all
+Isaac.DebugString("[CoopExtraHUD] *** MOD LOADING STARTED ***")
 
 -- Default config values
 local config = nil -- will be set by MCM.Init
@@ -26,6 +28,7 @@ local defaultConfig = {
     minimapPadding = 2,
     alwaysShowOverlayInMCM = false,
     debugOverlay = false,
+    autoAdjustOnResize = true, -- Default to enabled for better user experience
     _mcm_map_overlay_refresh = 244,
     _mcm_boundary_overlay_refresh = 574,
 
@@ -62,6 +65,7 @@ defaultConfigPresets[false] = { -- Updated
     scale = 0.4,
     yOffset = -10,
     xOffset = 10,
+    autoAdjustOnResize = true,
 }
 defaultConfigPresets[true] = { -- Vanilla+
     xSpacing = 8,
@@ -72,6 +76,7 @@ defaultConfigPresets[true] = { -- Vanilla+
     scale = 0.6,
     yOffset = 32,
     xOffset = 32,
+    autoAdjustOnResize = true,
 }
 
 -- Isaac best practice: Use proper constants and avoid magic numbers
@@ -271,7 +276,7 @@ local function TrackAllCurrentCollectibles()
     end
 end
 
--- Isaac best practice: Use explicit callback priority for deterministic ordering
+-- Isaac best practice: Enhanced game start handling
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
     -- Disable vanilla ExtraHUD if configured
     DisableVanillaExtraHUD()
@@ -281,8 +286,6 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
     spriteUsageTracker = {}
     MarkHudDirty()
 end, CallbackPriority and CallbackPriority.LATE or nil)
-
--- Isaac best practice: Use POST_UPDATE with low priority to avoid conflicts
 local lastPlayerCount = 0
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
     local curCount = Game():GetNumPlayers()
@@ -451,16 +454,29 @@ local function GetMiniMapiBounds()
     return { x = pos.X, y = pos.Y, w = size.X, h = size.Y }
 end
 
--- Dual-flag overlay logic (set by MCM.lua)
+-- MCM compatibility flags for overlay display (manual toggles only)
 ExtraHUD.MCMCompat_displayingOverlay = ""
 ExtraHUD.MCMCompat_selectedOverlay = ""
+ExtraHUD.MCMCompat_overlayTimestamp = 0
 
+-- Debug frame counter to reduce spam
+local debugFrameCounter = 0
 -- Sprite-based overlay system (following MCM exact implementation)
 local function GetMenuAnm2Sprite(animation, frame)
     local sprite = Sprite()
     sprite:Load("gfx/ui/coopextrahud/overlay.anm2", true)
     sprite:SetFrame(animation, frame)
+    Isaac.DebugString("[CoopExtraHUD] Created overlay sprite: " .. animation .. ", frame " .. frame)
     return sprite
+end
+
+-- Test sprite loading immediately
+Isaac.DebugString("[CoopExtraHUD] Testing sprite loading...")
+local testSprite = GetMenuAnm2Sprite("Offset", 0)
+if testSprite then
+    Isaac.DebugString("[CoopExtraHUD] Test sprite loaded successfully")
+else
+    Isaac.DebugString("[CoopExtraHUD] ERROR: Test sprite failed to load")
 end
 
 -- Optimized column calculation
@@ -579,6 +595,68 @@ local function GetClampedConfig(cfg, screenW, screenH)
     return clamped
 end
 
+-- Auto-resize functionality: adjusts HUD boundary when screen size changes
+local lastAutoResizeScreenW, lastAutoResizeScreenH = 0, 0
+local function HandleAutoResize(cfg, screenW, screenH)
+    -- Only proceed if auto-adjust is enabled
+    if not cfg.autoAdjustOnResize then
+        lastAutoResizeScreenW, lastAutoResizeScreenH = screenW, screenH
+        return
+    end
+    
+    -- Check if this is the first run or screen size changed
+    local screenChanged = (lastAutoResizeScreenW ~= screenW or lastAutoResizeScreenH ~= screenH)
+    
+    if screenChanged and lastAutoResizeScreenW > 0 and lastAutoResizeScreenH > 0 then
+        -- Calculate relative position as percentage of screen
+        local relativeX = cfg.boundaryX / lastAutoResizeScreenW
+        local relativeY = cfg.boundaryY / lastAutoResizeScreenH
+        local relativeW = cfg.boundaryW / lastAutoResizeScreenW
+        local relativeH = cfg.boundaryH / lastAutoResizeScreenH
+        
+        -- Apply to new screen size
+        cfg.boundaryX = math.floor(relativeX * screenW + 0.5)
+        cfg.boundaryY = math.floor(relativeY * screenH + 0.5)
+        cfg.boundaryW = math.floor(relativeW * screenW + 0.5)
+        cfg.boundaryH = math.floor(relativeH * screenH + 0.5)
+        
+        -- Clamp to valid ranges
+        cfg.boundaryX = math.max(0, math.min(cfg.boundaryX, screenW - 32))
+        cfg.boundaryY = math.max(0, math.min(cfg.boundaryY, screenH - 32))
+        cfg.boundaryW = math.max(32, math.min(cfg.boundaryW, screenW - cfg.boundaryX))
+        cfg.boundaryH = math.max(32, math.min(cfg.boundaryH, screenH - cfg.boundaryY))
+        
+        -- Also adjust minimap if it's not auto-positioned (-1 values)
+        if cfg.minimapX >= 0 and cfg.minimapY >= 0 then
+            local relativeMinimapX = cfg.minimapX / lastAutoResizeScreenW
+            local relativeMinimapY = cfg.minimapY / lastAutoResizeScreenH
+            local relativeMinimapW = cfg.minimapW / lastAutoResizeScreenW
+            local relativeMinimapH = cfg.minimapH / lastAutoResizeScreenH
+            
+            cfg.minimapX = math.floor(relativeMinimapX * screenW + 0.5)
+            cfg.minimapY = math.floor(relativeMinimapY * screenH + 0.5)
+            cfg.minimapW = math.floor(relativeMinimapW * screenW + 0.5)
+            cfg.minimapH = math.floor(relativeMinimapH * screenH + 0.5)
+            
+            -- Clamp minimap values
+            cfg.minimapX = math.max(0, math.min(cfg.minimapX, screenW - 1))
+            cfg.minimapY = math.max(0, math.min(cfg.minimapY, screenH - 1))
+            cfg.minimapW = math.max(0, math.min(cfg.minimapW, screenW - cfg.minimapX))
+            cfg.minimapH = math.max(0, math.min(cfg.minimapH, screenH - cfg.minimapY))
+        end
+        
+        -- Save the updated config
+        SaveConfig()
+        
+        -- Force cache refresh
+        cachedClampedConfig = nil
+        lastScreenW, lastScreenH = 0, 0
+        
+        print("[CoopExtraHUD] Auto-adjusted HUD position for new screen size: " .. screenW .. "x" .. screenH)
+    end
+    
+    lastAutoResizeScreenW, lastAutoResizeScreenH = screenW, screenH
+end
 -- Overlay sprites (created once and reused, MCM-style)
 
 local HudOffsetVisualTopLeft = GetMenuAnm2Sprite("Offset", 0)
@@ -591,6 +669,45 @@ local DividerSprite = Sprite()
 DividerSprite:Load("gfx/ui/coopextrahud/overlay.anm2", true)
 DividerSprite:SetFrame("Divider", 0)
 DividerSprite:LoadGraphics()
+
+-- Manual overlay toggle for testing (Keyboard shortcuts)
+local overlayToggleDebounce = 0
+local currentManualOverlayType = ""
+
+-- Function to manually set overlay types with different keys
+local function HandleManualOverlayToggle()
+    if overlayToggleDebounce > 0 then
+        overlayToggleDebounce = overlayToggleDebounce - 1
+        return
+    end
+    
+    local newOverlayType = ""
+    
+    -- Check for different keys for different overlay types
+    if Input.IsButtonPressed(Keyboard.KEY_B, 0) then -- B for Boundary
+        newOverlayType = currentManualOverlayType == "boundary" and "" or "boundary"
+        overlayToggleDebounce = 15
+    elseif Input.IsButtonPressed(Keyboard.KEY_M, 0) then -- M for Minimap
+        newOverlayType = currentManualOverlayType == "minimap" and "" or "minimap"
+        overlayToggleDebounce = 15
+    elseif Input.IsButtonPressed(Keyboard.KEY_H, 0) then -- H for HUD offset
+        newOverlayType = currentManualOverlayType == "hudoffset" and "" or "hudoffset"
+        overlayToggleDebounce = 15
+    elseif Input.IsButtonPressed(Keyboard.KEY_N, 0) then -- N for None (clear all)
+        newOverlayType = ""
+        overlayToggleDebounce = 15
+    end
+    
+    if newOverlayType ~= currentManualOverlayType then
+        currentManualOverlayType = newOverlayType
+        ExtraHUD.MCMCompat_displayingOverlay = newOverlayType
+        ExtraHUD.MCMCompat_selectedOverlay = newOverlayType
+        
+        local overlayName = newOverlayType == "" and "None" or newOverlayType
+        Isaac.DebugString("[CoopExtraHUD] Manual overlay set: " .. overlayName)
+        print("[CoopExtraHUD] Manual overlay: " .. overlayName .. " (B=Boundary, M=Minimap, H=HUD Offset, N=None)")
+    end
+end
 
 function ExtraHUD:PostRender()
     -- Isaac best practice: Use proper Isaac API game state validation
@@ -611,6 +728,9 @@ function ExtraHUD:PostRender()
     
     -- Initialize constants that depend on enums (safe to call multiple times)
     InitializeConstants()
+    
+    -- Handle auto-resize if enabled (must be called before getting configs)
+    HandleAutoResize(getConfig(), screenW, screenH)
     
     -- Get clamped config (cached when screen size doesn't change) for layout/scaling
     local clampedCfg = GetClampedConfig(getConfig(), screenW, screenH)
@@ -767,22 +887,75 @@ function ExtraHUD:PostRender()
             MarkHudDirty()
         end
     end
+    -- Update MCM overlay detection every frame when MCM is open
+    -- Manual overlay controls via MCM toggle switches only
+    -- All automatic detection has been removed per user request
+    
+    -- Manual overlay controls available as backup (B=Boundary, M=Minimap, H=HUD Offset, N=None)
+    HandleManualOverlayToggle()
+    
+    -- Debug: Log overlay flags every 120 frames to monitor their state
+    debugFrameCounter = debugFrameCounter + 1
+    if debugFrameCounter % 120 == 1 then
+        Isaac.DebugString("[CoopExtraHUD] Overlay flags - Displaying: '" .. (ExtraHUD.MCMCompat_displayingOverlay or "nil") .. "', Selected: '" .. (ExtraHUD.MCMCompat_selectedOverlay or "nil") .. "'")
+    end
+    
     -- Only show overlays if MCM is open and both Display and Selected flags match (always use live config for overlay positions)
+    -- OR if overlays are manually triggered via helper options (allow overlays even when MCM is closed)
     local mcm = _G['ModConfigMenu']
     local mcmIsOpen = mcm and ((type(mcm.IsVisible) == "function" and mcm.IsVisible()) or (type(mcm.IsVisible) == "boolean" and mcm.IsVisible))
-    local showBoundary, showMinimap = false, false
-    if mcmIsOpen then
+    -- Check if we should show overlays in MCM
+    local showBoundary, showMinimap, showHudOffset = false, false, false
+    
+    -- Show overlays if MCM is open OR if they were manually triggered
+    if mcmIsOpen or ExtraHUD.MCMCompat_displayingOverlay ~= "" then
+        -- Check for boundary/minimap/hudoffset overlays using the dual-flag system
         if ExtraHUD.MCMCompat_displayingOverlay == "boundary" and ExtraHUD.MCMCompat_selectedOverlay == "boundary" then
             showBoundary = true
+            -- Debug: Log when boundary overlay is active
+            Isaac.DebugString("[CoopExtraHUD] Rendering boundary overlay")
         elseif ExtraHUD.MCMCompat_displayingOverlay == "minimap" and ExtraHUD.MCMCompat_selectedOverlay == "minimap" then
             showMinimap = true
+            -- Debug: Log when minimap overlay is active
+            Isaac.DebugString("[CoopExtraHUD] Rendering minimap overlay")
+        elseif ExtraHUD.MCMCompat_displayingOverlay == "hudoffset" and ExtraHUD.MCMCompat_selectedOverlay == "hudoffset" then
+            showHudOffset = true
+            -- Debug: Log when HUD offset overlay is active
+            Isaac.DebugString("[CoopExtraHUD] Rendering HUD offset overlay")
+        end
+        
+        -- Debug: Always log overlay flags when MCM is open
+        if ExtraHUD.MCMCompat_displayingOverlay ~= "" or ExtraHUD.MCMCompat_selectedOverlay ~= "" then
+            Isaac.DebugString("[CoopExtraHUD] MCM Overlay flags - Displaying: '" .. ExtraHUD.MCMCompat_displayingOverlay .. "', Selected: '" .. ExtraHUD.MCMCompat_selectedOverlay .. "'")
+        else
+            -- Debug: Log that MCM is open but no overlays are active (every 60 frames to reduce spam)
+            if debugFrameCounter % 60 == 1 then
+                Isaac.DebugString("[CoopExtraHUD] MCM is open but no overlay flags set")
+            end
         end
     else
-        -- Always clear overlay flags when MCM is closed
+        -- Debug: Log overlay flags even when MCM is closed (for manual toggle testing)
         if ExtraHUD.MCMCompat_displayingOverlay ~= "" or ExtraHUD.MCMCompat_selectedOverlay ~= "" then
-            ExtraHUD.MCMCompat_displayingOverlay = ""
-            ExtraHUD.MCMCompat_selectedOverlay = ""
+            Isaac.DebugString("[CoopExtraHUD] Overlay flags active (MCM closed) - Displaying: '" .. ExtraHUD.MCMCompat_displayingOverlay .. "', Selected: '" .. ExtraHUD.MCMCompat_selectedOverlay .. "'")
+            
+            -- Allow manual overlays even when MCM is closed (for testing)
+            if ExtraHUD.MCMCompat_displayingOverlay == "boundary" and ExtraHUD.MCMCompat_selectedOverlay == "boundary" then
+                showBoundary = true
+                Isaac.DebugString("[CoopExtraHUD] Rendering manual boundary overlay")
+            elseif ExtraHUD.MCMCompat_displayingOverlay == "minimap" and ExtraHUD.MCMCompat_selectedOverlay == "minimap" then
+                showMinimap = true
+                Isaac.DebugString("[CoopExtraHUD] Rendering manual minimap overlay")
+            elseif ExtraHUD.MCMCompat_displayingOverlay == "hudoffset" and ExtraHUD.MCMCompat_selectedOverlay == "hudoffset" then
+                showHudOffset = true
+                Isaac.DebugString("[CoopExtraHUD] Rendering manual HUD offset overlay")
+            end
         end
+        
+        -- Don't clear overlay flags when MCM is closed (allow manual testing)
+        -- if ExtraHUD.MCMCompat_displayingOverlay ~= "" or ExtraHUD.MCMCompat_selectedOverlay ~= "" then
+        --     ExtraHUD.MCMCompat_displayingOverlay = ""
+        --     ExtraHUD.MCMCompat_selectedOverlay = ""
+        -- end
     end
     -- Draw overlays as needed (now using proper sprites with color coding)
     if showBoundary then
@@ -845,11 +1018,58 @@ function ExtraHUD:PostRender()
         else
             AddDebugLog("[Overlay] showMinimap: minimap config value(s) nil or zero, skipping overlay")
         end
+    elseif showHudOffset then
+        -- Show HUD offset overlay - green corners to indicate where the HUD is positioned
+        local hudX = tonumber(getConfig().xOffset) or 0
+        local hudY = tonumber(getConfig().yOffset) or 0
+        local hudBoundaryX = tonumber(getConfig().boundaryX) or 0
+        local hudBoundaryY = tonumber(getConfig().boundaryY) or 0
+        local hudBoundaryW = tonumber(getConfig().boundaryW) or 0
+        local hudBoundaryH = tonumber(getConfig().boundaryH) or 0
+        
+        -- Calculate actual HUD position considering offset and boundary
+        local actualHudX = hudBoundaryX + hudX
+        local actualHudY = hudBoundaryY + hudY
+        
+        if hudBoundaryW > 0 and hudBoundaryH > 0 then
+            local vecZero = Vector(0, 0)
+            -- Green color for HUD offset overlay
+            local hudOffsetColor = Color(0, 1, 0, 0.8) -- Green with transparency
+            if HudOffsetVisualTopLeft then
+                HudOffsetVisualTopLeft.Color = hudOffsetColor
+                HudOffsetVisualTopLeft:Render(Vector(actualHudX, actualHudY), vecZero, vecZero)
+            end
+            if HudOffsetVisualTopRight then
+                HudOffsetVisualTopRight.Color = hudOffsetColor
+                HudOffsetVisualTopRight:Render(Vector(actualHudX + hudBoundaryW - 32, actualHudY), vecZero, vecZero)
+            end
+            if HudOffsetVisualBottomLeft then
+                HudOffsetVisualBottomLeft.Color = hudOffsetColor
+                HudOffsetVisualBottomLeft:Render(Vector(actualHudX, actualHudY + hudBoundaryH - 32), vecZero, vecZero)
+            end
+            if HudOffsetVisualBottomRight then
+                HudOffsetVisualBottomRight.Color = hudOffsetColor
+                HudOffsetVisualBottomRight:Render(Vector(actualHudX + hudBoundaryW - 32, actualHudY + hudBoundaryH - 32), vecZero, vecZero)
+            end
+            Isaac.RenderText("HUD Position", actualHudX+4, actualHudY+4, 0, 1, 0, 1)
+        else
+            AddDebugLog("[Overlay] showHudOffset: boundary config value(s) nil or zero, skipping overlay")
+        end
     end
-
-    -- ...existing code...
 end
 
+--[[
+Isaac Modding Best Practices Applied:
+- ✅ No Isaac.ExecuteCommand (uses Options.ExtraHUDStyle instead)
+- ✅ No require() for optional dependencies (robust MCM loading)
+- ✅ Explicit callback priorities for deterministic execution order
+- ✅ Comprehensive game state validation (pause, menu, room types)
+- ✅ Resource validation with proper constants and safe fallbacks
+- ✅ Enhanced item validation with Isaac API best practices
+- ✅ Safe Isaac API access patterns with nil checks
+- ✅ Performance optimization with proper constant usage
+- ✅ Robust optional dependency loading without require
+]]
 
 -- Also disable vanilla ExtraHUD on mod load (first load)
 DisableVanillaExtraHUD()
@@ -857,7 +1077,7 @@ DisableVanillaExtraHUD()
 -- Isaac best practice: Use explicit callback priority for render callbacks
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_RENDER, ExtraHUD.PostRender, CallbackPriority and CallbackPriority.LATE or nil)
 
--- MCM integration
+-- MCM integration (automatic detection removed, manual toggles only)
 
 -- Isaac best practice: Robust optional dependency loading without require
 local MCM = nil
@@ -906,15 +1126,6 @@ if ExtraHUD and ExtraHUD.HasData and ExtraHUD:HasData() then
 end
 
 
--- Isaac best practice: Game state management
-ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
-    -- Always mark HUD dirty when game starts
-    MarkHudDirty()
-end, CallbackPriority and CallbackPriority.EARLY or nil)
-
-
-
-
 -- Isaac best practice: Use early priority for config saving to ensure it happens before other cleanup
 ExtraHUD:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, function()
     SaveConfig()
@@ -930,6 +1141,7 @@ Isaac Modding Best Practices Applied:
 - ✅ Enhanced item validation with Isaac API best practices
 - ✅ Safe Isaac API access patterns with nil checks
 - ✅ Performance optimization with proper constant usage
+- ✅ Robust optional dependency loading without require
 ]]
 
 -- Isaac best practice: Load our MCM module (same mod, always safe)
@@ -1004,5 +1216,3 @@ do
         end
     end
 end
-
-print("[CoopExtraHUD] Loaded with Isaac modding best practices!")
