@@ -3,7 +3,7 @@
     <name>CoopExtraHUD</name>
     <directory>coopextrahud</directory>
     <id>3502047453</id>
-    <description>**CoopExtraHUD** enhances the co-op experience in *The Binding of Isaac: Repentance+* by showing each player’s passive collectibles in a clean, minimal grid HUD on the right side of your screen.
+    <description>**CoopExtraHUD** enhances the co-op experience in *The Binding of Isaac: Repentance+* by showing each player's passive collectibles in a clean, minimal grid HUD on the right side of your screen.
 
 Choose between two HUD styles:
 
@@ -16,31 +16,46 @@ The HUD dynamically scales with the number of players and items, plus you can cu
 
 ## Features (Working)
 
-- Displays passive items for all co-op players, including multiplayer and new player joins
-- Tracks and displays collectibles in true pickup order per player
-- Two HUD modes with different layouts and positioning
-- Auto-scaling for different screen sizes and item counts
-- Adjustable scale, opacity, spacing, and offsets
-- Optional dividing lines between players
-- Debug overlay for tweaking and troubleshooting
-- Saves your customized settings separately for each HUD mode
-- Mod Config Menu integration (presets, reset, etc.)
-- No known errors in log or in-game
+- **Multi-Player Support:** Displays passive items for all co-op players, including multiplayer and new player joins
+- **Modded Item Support:** Full compatibility with modded collectibles, automatically detects and displays items from mods
+- **True Pickup Order:** Tracks and displays collectibles in actual pickup order per player
+- **Dual HUD Modes:** Two preset layouts with different positioning and visual styles
+- **Smart Scaling:** Auto-scaling for different screen sizes, item counts, and resolutions
+- **Full Customization:** Adjustable scale, opacity, spacing, offsets, and divider positioning
+- **Visual Helpers:** Automatic overlay guides when adjusting settings (red=boundary, cyan=minimap, green=HUD position)
+- **Minimap Avoidance:** Intelligent positioning to avoid overlapping with minimap areas
+- **Auto-Resize Support:** Maintains relative positioning when game window is resized
+- **Preset Management:** Save/load custom settings separately for each HUD mode with reset options
+- **Performance Optimized:** Efficient caching system with minimal frame-by-frame overhead
+- **Debug Tools:** Optional overlay system for positioning and troubleshooting
+- **Mod Config Menu Integration:** Full MCM support with organized categories and real-time preview
+- **Manual Controls:** Keyboard shortcuts (B/M/H/N keys) for quick overlay toggling
 
 ---
 
 ## Work in Progress / Planned
 
-- More HUD presets or custom layouts
-- Better support for unusual screen setups
-- Support for modded collectibles (currently only vanilla collectibles are tracked)
-- Further performance and debug tool improvements
+- **Additional Presets:** More HUD layouts and positioning options
+- **Enhanced Scaling:** Better support for unusual screen setups and ultra-wide displays
+- **Advanced Customization:** Per-player color coding and additional visual options
 
 ---
 
-Perfect for streamers, couch co-op players, or anyone wanting clearer HUD info during hectic runs!
-</description>
-    <version>1.0.10</version>
+## Controls
+
+**Automatic Overlays (MCM):**
+- Navigate to HUD/Boundaries/Minimap tabs to see positioning helpers automatically
+
+**Manual Overlays (Keyboard):**
+- **B** - Toggle boundary overlay (red corners)
+- **M** - Toggle minimap overlay (cyan corners)  
+- **H** - Toggle HUD position overlay (green corners)
+- **N** - Clear all overlays
+
+---
+
+Perfect for streamers, couch co-op players, or anyone wanting clearer HUD info during hectic runs!</description>
+    <version>1.0.11</version>
     <visibility>Public</visibility>
     <tag id="Tweaks"/>
 </metadata>
