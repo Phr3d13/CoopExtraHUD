@@ -1,7 +1,33 @@
+-- Ensure getConfig is always defined, even if MCM is not loaded
+if not getConfig then
+    function getConfig()
+        return config
+    end
+end
+-- Forward declarations for functions/objects used before definition
+-- Isaac HUD icon and layout constants
+local ICON_SIZE = 32 -- Standard Isaac item icon size in pixels
+local INTER_PLAYER_SPACING = 16 -- Space between player HUD blocks in pixels
+
+-- Isaac modding best practices: define safe constants and stubs for missing globals
+local MIN_COLLECTIBLE_ID = 1
+local MAX_ITEM_ID = 1000 -- Safe upper bound for modded items, adjust as needed
+local DEFAULT_ITEM_LIMIT = 700 -- Repentance vanilla item count, adjust as needed
+local defaultConfigPresets = {
+    [false] = {},
+    [true] = {}
+}
+local function DisableVanillaExtraHUD()
+    -- Stub: implement vanilla HUD disabling if needed, or leave as no-op
+end
+
 local ExtraHUD = RegisterMod("CoopExtraHUD", 1)
 
 -- Default config values
-local config = nil -- will be set by MCM.Init
+-- (Removed duplicate config, configPresets, getConfig definitions)
+
+-- Isaac best practice: Robust optional dependency loading without require
+local MCM = nil
 
 local defaultConfig = {
     scale = 0.4, -- updated default
@@ -24,66 +50,92 @@ local defaultConfig = {
     minimapH = 101, -- updated default
     minimapPadding = 2,
     alwaysShowOverlayInMCM = false,
-    debugOverlay = false,
-    autoAdjustOnResize = true, -- Default to enabled for better user experience
-    _mcm_map_overlay_refresh = 244,
-    _mcm_boundary_overlay_refresh = 574,
-
-    disableVanillaExtraHUD = true, -- disables vanilla ExtraHUD by default
+    hideHudOnPause = true,
+    showCharHeadIcons = false, -- new default
 }
+    -- Pass config tables/functions to MCM (always use live config)
+    local mcmTables = nil
+    if MCM and MCM.Init then
+        mcmTables = MCM.Init({
+            ExtraHUD = ExtraHUD,
+            config = config,
+            configPresets = configPresets,
+            SaveConfig = SaveConfig,
+            LoadConfig = LoadConfig,
+            UpdateCurrentPreset = UpdateCurrentPreset,
+            getConfig = getConfig,
+            MarkHudDirty = MarkHudDirty,
+            OnOverlayAdjusterMoved = function()
+                cachedClampedConfig = nil
+                cachedLayout.valid = false
+                lastScreenW, lastScreenH = 0, 0
+                MarkHudDirty()
+            end,
+        })
+    end
 
--- Helper to get config safely before MCM.Init
-local function getConfig()
-    return config or defaultConfig
-end
+    if mcmTables then
+        config = mcmTables.config
+        configPresets = mcmTables.configPresets
+        SaveConfig = mcmTables.SaveConfig
+        LoadConfig = mcmTables.LoadConfig
+        UpdateCurrentPreset = mcmTables.UpdateCurrentPreset
+        if type(mcmTables.getConfig) == "function" then
+            getConfig = mcmTables.getConfig
+        end
+        if type(mcmTables.MarkHudDirty) == "function" then
+            ExtraHUD.MarkHudDirty = mcmTables.MarkHudDirty
+        end
+        if type(mcmTables.OnOverlayAdjusterMoved) == "function" then
+            ExtraHUD.OnOverlayAdjusterMoved = mcmTables.OnOverlayAdjusterMoved
+        else
+            ExtraHUD.OnOverlayAdjusterMoved = function()
+                cachedClampedConfig = nil
+                cachedLayout.valid = false
+                lastScreenW, lastScreenH = 0, 0
+                MarkHudDirty()
+            end
+        end
 
--- Isaac best practice: Use proper Options API instead of ExecuteCommand
-local function DisableVanillaExtraHUD()
-    local cfg = getConfig()
-    if cfg.disableVanillaExtraHUD then
-        -- Isaac community standard: Use Options.ExtraHUDStyle = 0 (not ExecuteCommand)
-        if Options and type(Options) == "table" then
-            Options.ExtraHUDStyle = 0
+        -- Add MCM entry for hideHudOnPause
+        if MCM and type(MCM.AddBooleanSetting) == "function" then
+            MCM.AddBooleanSetting({
+                mod = ExtraHUD,
+                category = "General",
+                key = "hideHudOnPause",
+                title = "Hide HUD when paused",
+                desc = "If enabled, the CoopExtraHUD will be hidden when the game is paused.",
+                default = true,
+                get = function() return config.hideHudOnPause end,
+                set = function(val) config.hideHudOnPause = val; SaveConfig(); MarkHudDirty() end
+            })
+        elseif MCM and type(MCM.AddSetting) == "function" then
+            -- Fallback for older MCM: add as a generic setting
+            MCM.AddSetting({
+                mod = ExtraHUD,
+                type = "boolean",
+                category = "General",
+                key = "hideHudOnPause",
+                title = "Hide HUD when paused",
+                desc = "If enabled, the CoopExtraHUD will be hidden when the game is paused.",
+                default = true,
+                get = function() return config.hideHudOnPause end,
+                set = function(val) config.hideHudOnPause = val; SaveConfig(); MarkHudDirty() end
+            })
+        end
+
+        if MCM and MCM.RegisterConfigMenu then
+            MCM.RegisterConfigMenu()
+        end
+    else
+        ExtraHUD.OnOverlayAdjusterMoved = function()
+            cachedClampedConfig = nil
+            cachedLayout.valid = false
+            lastScreenW, lastScreenH = 0, 0
+            MarkHudDirty()
         end
     end
-end
-
-
--- Preset configurations keyed by boolean hudMode
-local configPresets = nil -- will be set by MCM.Init
-
-local defaultConfigPresets = {}
-defaultConfigPresets[false] = { -- Updated
-    xSpacing = 5,
-    dividerOffset = -20,
-    opacity = 0.8,
-    ySpacing = 5,
-    dividerYOffset = 0,
-    scale = 0.4,
-    yOffset = -10,
-    xOffset = 10,
-    autoAdjustOnResize = true,
-}
-defaultConfigPresets[true] = { -- Vanilla+
-    xSpacing = 8,
-    dividerOffset = -16,
-    opacity = 0.85,
-    ySpacing = 8,
-    dividerYOffset = 0,
-    scale = 0.6,
-    yOffset = 32,
-    xOffset = 32,
-    autoAdjustOnResize = true,
-}
-
--- Isaac best practice: Use proper constants and avoid magic numbers
-local ICON_SIZE = 32
-local INTER_PLAYER_SPACING = 12
-local MIN_COLLECTIBLE_ID = 1
-local DEFAULT_ITEM_LIMIT = 732 -- Safe fallback
-
--- Isaac best practice: Safe constant access with fallbacks
-local MAX_ITEM_ID = 1000
+-- removed stray end
 local VANILLA_ITEM_LIMIT = nil
 
 -- Function to safely initialize constants that depend on enums
@@ -228,29 +280,30 @@ local function UpdatePlayerIconData()
         cachedPlayerIconData[i + 1] = {}
         local player = Isaac.GetPlayer(i)
         local ownedSet = {}
-        -- Only scan up to MAX_ITEM_ID, but skip IDs above vanilla limit unless modded items are detected
         for id = 1, MAX_ITEM_ID do
             if player:HasCollectible(id) and IsValidItem(id) then
                 ownedSet[id] = true
             end
         end
+        local alreadyAdded = {}
+        -- First, add items in pickup order (if still owned)
         if playerPickupOrder[i] then
             for _, id in ipairs(playerPickupOrder[i]) do
                 if ownedSet[id] then
                     table.insert(cachedPlayerIconData[i + 1], id)
-                    ownedSet[id] = nil
+                    alreadyAdded[id] = true
                 end
             end
         end
-        for id = 1, MAX_ITEM_ID do
-            if ownedSet[id] then
+        -- Then, add any currently owned items not already in pickup order (e.g. starting items)
+        for id in pairs(ownedSet) do
+            if not alreadyAdded[id] then
                 table.insert(cachedPlayerIconData[i + 1], id)
             end
         end
     end
     cachedPlayerCount = totalPlayers
     hudDirty = false
-    -- Only clean up unused sprites if necessary
     if shouldCleanup then
         CleanupUnusedSprites()
     end
@@ -261,11 +314,18 @@ local function TrackAllCurrentCollectibles()
     for i = 0, Game():GetNumPlayers() - 1 do
         local player = Isaac.GetPlayer(i)
         playerTrackedCollectibles[i] = {}
-        playerPickupOrder[i] = {}
         -- Only scan up to MAX_ITEM_ID, skip high IDs unless needed
+        local startingItems = {}
         for id = 1, MAX_ITEM_ID do
             if player:HasCollectible(id) and IsValidItem(id) then
                 playerTrackedCollectibles[i][id] = true
+                table.insert(startingItems, id)
+            end
+        end
+        -- If pickup order is empty, initialize it with starting items (in order)
+        if not playerPickupOrder[i] or #playerPickupOrder[i] == 0 then
+            playerPickupOrder[i] = {}
+            for _, id in ipairs(startingItems) do
                 table.insert(playerPickupOrder[i], id)
             end
         end
@@ -289,11 +349,9 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
         for i = lastPlayerCount, curCount - 1 do
             local player = Isaac.GetPlayer(i)
             playerTrackedCollectibles[i] = {}
-            playerPickupOrder[i] = {}
             for id = 1, MAX_ITEM_ID do
                 if player:HasCollectible(id) and IsValidItem(id) then
                     playerTrackedCollectibles[i][id] = true
-                    table.insert(playerPickupOrder[i], id)
                 end
             end
         end
@@ -309,18 +367,9 @@ local function UpdatePickupOrderForAllPlayers()
         local player = Isaac.GetPlayer(i)
         playerPickupOrder[i] = playerPickupOrder[i] or {}
         local owned = {}
-        -- Only scan up to MAX_ITEM_ID
         for id = 1, MAX_ITEM_ID do
             if player:HasCollectible(id) and IsValidItem(id) then
                 owned[id] = true
-                -- If not already in order, add to end
-                local found = false
-                for _, v in ipairs(playerPickupOrder[i]) do
-                    if v == id then found = true break end
-                end
-                if not found then
-                    table.insert(playerPickupOrder[i], id)
-                end
             end
         end
         -- Remove any collectibles from order that are no longer owned
@@ -345,6 +394,23 @@ end)
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_PICKUP_UPDATE, function(_, pickup)
     if pickup.Variant == PickupVariant.PICKUP_COLLECTIBLE then
         if pickup:GetSprite():IsFinished("Collect") or pickup:IsDead() then
+            for i = 0, Game():GetNumPlayers() - 1 do
+                local player = Isaac.GetPlayer(i)
+                for id = 1, MAX_ITEM_ID do
+                    if player:HasCollectible(id) and IsValidItem(id) then
+                        local alreadyTracked = false
+                        if playerPickupOrder[i] then
+                            for _, v in ipairs(playerPickupOrder[i]) do
+                                if v == id then alreadyTracked = true break end
+                            end
+                        end
+                        if not alreadyTracked then
+                            playerPickupOrder[i] = playerPickupOrder[i] or {}
+                            table.insert(playerPickupOrder[i], id)
+                        end
+                    end
+                end
+            end
             MarkHudDirty()
         end
     end
@@ -438,16 +504,49 @@ local function RenderItemIcon(itemId, x, y, scale, opa)
 end
 
 -- MiniMapAPI integration: get minimap bounding box if available
-local function GetMiniMapiBounds()
-    local mmapi = _G["MiniMapAPI"] or _G["MinimapAPI"] or _G["MiniMapAPICompat"]
-    if not mmapi then return nil end
-    if not mmapi.GetScreenTopRight or not mmapi.GetScreenSize then return nil end
-    local pos = mmapi.GetScreenTopRight()
-    local size = mmapi.GetScreenSize()
-    if not pos or not size or not pos.X or not pos.Y or not size.X or not size.Y then
-        return nil
+
+-- Estimate vanilla minimap area if MiniMapAPI is not present
+local function GetVanillaMinimapRect(screenW, screenH)
+    -- These values are based on vanilla minimap size and offset in Repentance
+    local minimapW, minimapH = 141, 101 -- default vanilla minimap size
+    local offsetX, offsetY = 0, 0
+    if Options and type(Options) == "table" and Options.HUDOffset then
+        offsetX = 24 * (Options.HUDOffset or 0)
     end
-    return { x = pos.X, y = pos.Y, w = size.X, h = size.Y }
+    local margin = 8
+    -- Clamp minimap size to screen size to avoid overflow
+    minimapW = math.max(32, math.min(minimapW, screenW - 2 * margin))
+    minimapH = math.max(32, math.min(minimapH, screenH - 2 * margin))
+    local mapX = math.max(0, screenW - minimapW - margin + offsetX)
+    local mapY = math.max(0, margin + offsetY)
+    -- If screen is too small, fallback to a small box in the top right
+    if minimapW > screenW or minimapH > screenH then
+        minimapW = math.max(32, math.floor(screenW / 4))
+        minimapH = math.max(32, math.floor(screenH / 4))
+        mapX = math.max(0, screenW - minimapW - margin)
+        mapY = math.max(0, margin)
+    end
+    return { x = mapX, y = mapY, w = minimapW, h = minimapH }
+end
+
+-- MiniMapAPI integration: get minimap bounding box if available, else estimate vanilla minimap
+local function GetMinimapRect(screenW, screenH)
+    local mmapi = _G["MiniMapAPI"] or _G["MinimapAPI"] or _G["MiniMapAPICompat"]
+    if mmapi and type(mmapi.GetScreenTopRight) == "function" and type(mmapi.GetScreenSize) == "function" then
+        local topRight = mmapi.GetScreenTopRight()
+        local size = mmapi.GetScreenSize()
+        if topRight and size and topRight.X and topRight.Y and size.X and size.Y then
+            local mapW, mapH = size.X, size.Y
+            local mapX = topRight.X - mapW
+            local mapY = topRight.Y
+            -- Only use MiniMapAPI values if they are valid and not absurdly large
+            if mapW and mapH and mapW > 0 and mapH > 0 and mapW < screenW and mapH < screenH then
+                return { x = mapX, y = mapY, w = mapW, h = mapH }
+            end
+        end
+    end
+    -- Fallback to vanilla minimap estimate
+    return GetVanillaMinimapRect(screenW, screenH)
 end
 
 -- MCM compatibility flags for overlay display (manual toggles only)
@@ -455,7 +554,7 @@ ExtraHUD.MCMCompat_displayingOverlay = ""
 ExtraHUD.MCMCompat_selectedOverlay = ""
 ExtraHUD.MCMCompat_overlayTimestamp = 0
 -- EID-style automatic overlay detection
-ExtraHUD.MCMCompat_displayingEIDTab = ""
+ExtraHUD.MCMCompat_displayingTab = ""
 
 -- Cache MCM state to avoid checking every frame
 local lastMCMState = false
@@ -698,29 +797,42 @@ function ExtraHUD:PostRender()
     -- Isaac best practice: Use proper Isaac API game state validation
     local game = Game()
     if not game then return end
-    
-    -- Isaac API: Check if game is paused
-    if game:IsPaused() then
+
+    -- Isaac API: Check if game is paused, and if HUD should hide on pause
+    local cfg = getConfig()
+    if game:IsPaused() and cfg.hideHudOnPause then
         return
     end
-    
+
     -- Isaac API: Check for console/debug state (basic validation)
     local room = game:GetRoom()
     if not room then return end
-    
+
     local screenW, screenH = Isaac.GetScreenWidth(), Isaac.GetScreenHeight()
     if screenW <= 0 or screenH <= 0 then return end -- Safety check
-    
+
     -- Initialize constants that depend on enums (safe to call multiple times)
     InitializeConstants()
-    
+
     -- Handle auto-resize if enabled (must be called before getting configs)
-    HandleAutoResize(getConfig(), screenW, screenH)
-    
+    HandleAutoResize(cfg, screenW, screenH)
+
     -- Get clamped config (cached when screen size doesn't change) for layout/scaling
-    local clampedCfg = GetClampedConfig(getConfig(), screenW, screenH)
+    local clampedCfg = GetClampedConfig(cfg, screenW, screenH)
     -- Always use live config for boundary/minimap positions
-    local liveCfg = getConfig()
+    local liveCfg = cfg
+
+    -- Set minimap avoidance area to match MiniMapAPI or vanilla minimap estimate
+    local minimapRect = GetMinimapRect(screenW, screenH)
+    if minimapRect then
+        if liveCfg.minimapX ~= minimapRect.x or liveCfg.minimapY ~= minimapRect.y or liveCfg.minimapW ~= minimapRect.w or liveCfg.minimapH ~= minimapRect.h then
+            liveCfg.minimapX = minimapRect.x
+            liveCfg.minimapY = minimapRect.y
+            liveCfg.minimapW = minimapRect.w
+            liveCfg.minimapH = minimapRect.h
+            -- Do not save config here, as this is a runtime-only adjustment
+        end
+    end
 
     -- Only update player icon data cache if dirty or player count changed
     local totalPlayers = game:GetNumPlayers()
@@ -771,16 +883,19 @@ function ExtraHUD:PostRender()
         local blockW = layout.blockWidths[i]
         -- Defensive: skip this player if layout columns or block width are missing/invalid
         if type(cols) ~= "number" or cols < 1 or type(blockW) ~= "number" or blockW < 1 then
-            -- Skip this player, prevents crash for users without MCM or with broken config
             goto continue_player_loop
         end
         local rows = math.ceil(#items / cols)
-        -- PERF: Only render up to 32 items per player to avoid excessive draw calls
         local maxItems = math.min(#items, 32)
+
+        -- Character head icon rendering (if enabled)
+        -- ...character head icon rendering removed...
+
         for idx = 1, maxItems do
-            local itemId = items[idx]
-            local row = math.floor((idx - 1) / cols)
-            local col = (idx - 1) % cols
+            local renderIdx = idx
+            local itemId = items[renderIdx]
+            local row = math.floor((renderIdx - 1) / cols)
+            local col = (renderIdx - 1) % cols
             local x = curX + col * (ICON_SIZE + clampedCfg.xSpacing) * layout.scale
             local y = startY + row * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
             RenderItemIcon(itemId, x, y, layout.scale, clampedCfg.opacity)
@@ -789,12 +904,10 @@ function ExtraHUD:PostRender()
             local dividerX = curX + blockW + (INTER_PLAYER_SPACING * layout.scale) / 2 + clampedCfg.dividerOffset
             local dividerY = startY + clampedCfg.dividerYOffset
             local dividerHeight = layout.totalHeight
-            -- Robust divider sprite scaling: scale factor, not pixel size
-            local spriteBaseHeight = 1 -- divider.png is 1x1 px
+            local spriteBaseHeight = 1
             local heightScale = math.max(1, math.floor(dividerHeight + 0.5))
             DividerSprite.Scale = Vector(1, heightScale)
             DividerSprite.Color = Color(1, 1, 1, clampedCfg.opacity)
-            -- Render at the top of the divider area
             DividerSprite:Render(Vector(dividerX, dividerY), Vector.Zero, Vector.Zero)
         end
         curX = curX + blockW + INTER_PLAYER_SPACING * layout.scale
@@ -883,23 +996,23 @@ function ExtraHUD:PostRender()
             
             if mcmIsOpen then
                 -- MCM just opened - apply automatic overlays based on current tab
-                if ExtraHUD.MCMCompat_displayingEIDTab == "HUD" then
+                if ExtraHUD.MCMCompat_displayingTab == "HUD" then
                     ExtraHUD.MCMCompat_displayingOverlay = "hudoffset"
                     ExtraHUD.MCMCompat_selectedOverlay = "hudoffset"
-                elseif ExtraHUD.MCMCompat_displayingEIDTab == "Boundaries" then
+                elseif ExtraHUD.MCMCompat_displayingTab == "Boundaries" then
                     ExtraHUD.MCMCompat_displayingOverlay = "boundary"
                     ExtraHUD.MCMCompat_selectedOverlay = "boundary"
-                elseif ExtraHUD.MCMCompat_displayingEIDTab == "Minimap" then
+                elseif ExtraHUD.MCMCompat_displayingTab == "Minimap" then
                     ExtraHUD.MCMCompat_displayingOverlay = "minimap"
                     ExtraHUD.MCMCompat_selectedOverlay = "minimap"
-                elseif ExtraHUD.MCMCompat_displayingEIDTab == "" then
+                elseif ExtraHUD.MCMCompat_displayingTab == "" then
                     ExtraHUD.MCMCompat_displayingOverlay = ""
                     ExtraHUD.MCMCompat_selectedOverlay = ""
                 end
             else
                 -- MCM just closed - clear automatic overlays but keep manual ones
-                if ExtraHUD.MCMCompat_displayingEIDTab ~= "" then
-                    ExtraHUD.MCMCompat_displayingEIDTab = ""
+                if ExtraHUD.MCMCompat_displayingTab ~= "" then
+                    ExtraHUD.MCMCompat_displayingTab = ""
                     -- Only clear overlay flags if they weren't set manually
                     if ExtraHUD.MCMCompat_displayingOverlay == "hudoffset" or ExtraHUD.MCMCompat_displayingOverlay == "boundary" or ExtraHUD.MCMCompat_displayingOverlay == "minimap" then
                         ExtraHUD.MCMCompat_displayingOverlay = ""
@@ -909,16 +1022,16 @@ function ExtraHUD:PostRender()
             end
         elseif mcmIsOpen then
             -- MCM is open and state didn't change - only update overlays if tab changed
-            if ExtraHUD.MCMCompat_displayingEIDTab == "HUD" then
+            if ExtraHUD.MCMCompat_displayingTab == "HUD" then
                 ExtraHUD.MCMCompat_displayingOverlay = "hudoffset"
                 ExtraHUD.MCMCompat_selectedOverlay = "hudoffset"
-            elseif ExtraHUD.MCMCompat_displayingEIDTab == "Boundaries" then
+            elseif ExtraHUD.MCMCompat_displayingTab == "Boundaries" then
                 ExtraHUD.MCMCompat_displayingOverlay = "boundary"
                 ExtraHUD.MCMCompat_selectedOverlay = "boundary"
-            elseif ExtraHUD.MCMCompat_displayingEIDTab == "Minimap" then
+            elseif ExtraHUD.MCMCompat_displayingTab == "Minimap" then
                 ExtraHUD.MCMCompat_displayingOverlay = "minimap"
                 ExtraHUD.MCMCompat_selectedOverlay = "minimap"
-            elseif ExtraHUD.MCMCompat_displayingEIDTab == "" then
+            elseif ExtraHUD.MCMCompat_displayingTab == "" then
                 ExtraHUD.MCMCompat_displayingOverlay = ""
                 ExtraHUD.MCMCompat_selectedOverlay = ""
             end
@@ -1084,10 +1197,14 @@ for k, v in pairs(defaultConfig) do
 end
 
 -- Fill missing configPresets keys from defaultConfigPresets (live)
-for mode, preset in pairs(defaultConfigPresets) do
-    if configPresets[mode] == nil then configPresets[mode] = {} end
-    for k, v in pairs(preset) do
-        if configPresets[mode][k] == nil then configPresets[mode][k] = v end
+if configPresets then
+    for mode, preset in pairs(defaultConfigPresets) do
+        if configPresets[mode] == nil then configPresets[mode] = {} end
+        if configPresets[mode] then
+            for k, v in pairs(preset) do
+                if configPresets[mode][k] == nil then configPresets[mode][k] = v end
+            end
+        end
     end
 end
 
@@ -1126,60 +1243,45 @@ else
 end
 
 -- Isaac best practice: MCM integration at mod load time
-do
+-- removed stray do
     
     -- Pass config tables/functions to MCM (always use live config)
-    local mcmTables = nil
-    if MCM and MCM.Init then
-        mcmTables = MCM.Init({
-            ExtraHUD = ExtraHUD,
-            config = config,
-            configPresets = configPresets,
-            SaveConfig = SaveConfig,
-            LoadConfig = LoadConfig,
-            UpdateCurrentPreset = UpdateCurrentPreset,
-            getConfig = getConfig,
-            MarkHudDirty = MarkHudDirty,
-            OnOverlayAdjusterMoved = function()
-                -- Invalidate all caches and force HUD/layout update immediately
-                cachedClampedConfig = nil
-                cachedLayout.valid = false
-                lastScreenW, lastScreenH = 0, 0
-                MarkHudDirty()
-            end,
-        })
+-- Pass config tables/functions to MCM (always use live config)
+local mcmTables = nil
+if MCM and MCM.Init then
+    mcmTables = MCM.Init({
+        ExtraHUD = ExtraHUD,
+        config = config,
+        configPresets = configPresets,
+        SaveConfig = SaveConfig,
+        LoadConfig = LoadConfig,
+        UpdateCurrentPreset = UpdateCurrentPreset,
+        getConfig = getConfig,
+        MarkHudDirty = MarkHudDirty,
+        OnOverlayAdjusterMoved = function()
+            cachedClampedConfig = nil
+            cachedLayout.valid = false
+            lastScreenW, lastScreenH = 0, 0
+            MarkHudDirty()
+        end,
+    })
+end
+
+if mcmTables then
+    config = mcmTables.config
+    configPresets = mcmTables.configPresets
+    SaveConfig = mcmTables.SaveConfig
+    LoadConfig = mcmTables.LoadConfig
+    UpdateCurrentPreset = mcmTables.UpdateCurrentPreset
+    if type(mcmTables.getConfig) == "function" then
+        getConfig = mcmTables.getConfig
     end
-    
-    if mcmTables then
-        config = mcmTables.config
-        configPresets = mcmTables.configPresets
-        SaveConfig = mcmTables.SaveConfig
-        LoadConfig = mcmTables.LoadConfig
-        UpdateCurrentPreset = mcmTables.UpdateCurrentPreset
-        if type(mcmTables.getConfig) == "function" then
-            getConfig = mcmTables.getConfig
-        end
-        if type(mcmTables.MarkHudDirty) == "function" then
-            ExtraHUD.MarkHudDirty = mcmTables.MarkHudDirty
-        end
-        if type(mcmTables.OnOverlayAdjusterMoved) == "function" then
-            ExtraHUD.OnOverlayAdjusterMoved = mcmTables.OnOverlayAdjusterMoved
-        else
-            -- Always provide a fallback that forces a full HUD/layout update
-            ExtraHUD.OnOverlayAdjusterMoved = function()
-                cachedClampedConfig = nil
-                cachedLayout.valid = false
-                lastScreenW, lastScreenH = 0, 0
-                MarkHudDirty()
-            end
-        end
-        
-        -- Only call RegisterConfigMenu if MCM is available
-        if MCM and MCM.RegisterConfigMenu then
-            MCM.RegisterConfigMenu()
-        end
+    if type(mcmTables.MarkHudDirty) == "function" then
+        ExtraHUD.MarkHudDirty = mcmTables.MarkHudDirty
+    end
+    if type(mcmTables.OnOverlayAdjusterMoved) == "function" then
+        ExtraHUD.OnOverlayAdjusterMoved = mcmTables.OnOverlayAdjusterMoved
     else
-        -- MCM not available, ensure we have working fallback functions
         ExtraHUD.OnOverlayAdjusterMoved = function()
             cachedClampedConfig = nil
             cachedLayout.valid = false
@@ -1187,6 +1289,43 @@ do
             MarkHudDirty()
         end
     end
-end
 
+    -- Add MCM entry for hideHudOnPause
+    if MCM and type(MCM.AddBooleanSetting) == "function" then
+        MCM.AddBooleanSetting({
+            mod = ExtraHUD,
+            category = "General",
+            key = "hideHudOnPause",
+            title = "Hide HUD when paused",
+            desc = "If enabled, the CoopExtraHUD will be hidden when the game is paused.",
+            default = true,
+            get = function() return config.hideHudOnPause end,
+            set = function(val) config.hideHudOnPause = val; SaveConfig(); MarkHudDirty() end
+        })
+    elseif MCM and type(MCM.AddSetting) == "function" then
+        -- Fallback for older MCM: add as a generic setting
+        MCM.AddSetting({
+            mod = ExtraHUD,
+            type = "boolean",
+            category = "General",
+            key = "hideHudOnPause",
+            title = "Hide HUD when paused",
+            desc = "If enabled, the CoopExtraHUD will be hidden when the game is paused.",
+            default = true,
+            get = function() return config.hideHudOnPause end,
+            set = function(val) config.hideHudOnPause = val; SaveConfig(); MarkHudDirty() end
+        })
+    end
+
+    if MCM and MCM.RegisterConfigMenu then
+        MCM.RegisterConfigMenu()
+    end
+else
+    ExtraHUD.OnOverlayAdjusterMoved = function()
+        cachedClampedConfig = nil
+        cachedLayout.valid = false
+        lastScreenW, lastScreenH = 0, 0
+        MarkHudDirty()
+    end
+end
 -- Mod loading complete
