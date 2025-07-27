@@ -28,10 +28,10 @@ local PLAYER_TYPE_TO_FRAME = {
   [PlayerType.PLAYER_LAZARUS] = 9,          -- Lazarus
   [PlayerType.PLAYER_EDEN] = 10,            -- Eden
   [PlayerType.PLAYER_THELOST] = 11,         -- The Lost
-  [PlayerType.PLAYER_LILITH] = 12,          -- Lilith
-  [PlayerType.PLAYER_KEEPER] = 13,          -- Keeper
-  [PlayerType.PLAYER_APOLLYON] = 14,        -- Apollyon
-  [PlayerType.PLAYER_THEFORGOTTEN] = 15,    -- The Forgotten
+  [PlayerType.PLAYER_LILITH] = 14,          -- Lilith
+  [PlayerType.PLAYER_KEEPER] = 15,          -- Keeper
+  [PlayerType.PLAYER_APOLLYON] = 16,        -- Apollyon
+  [PlayerType.PLAYER_THEFORGOTTEN] = 17,    -- The Forgotten
   [PlayerType.PLAYER_BETHANY] = 19,         -- Bethany
   [PlayerType.PLAYER_JACOB] = 20,           -- Jacob
   [PlayerType.PLAYER_ESAU] = 21,            -- Esau
@@ -864,7 +864,12 @@ function ExtraHUD:PostRender()
             local headSprite = GetCharHeadSprite(playerType)
             if headSprite then
                 headSprite.Scale = Vector(layout.scale, layout.scale) -- Match item icon scale
-                headSprite.Color = Color(1, 1, 1, clampedCfg.opacity)
+                -- Tint Jacob's head red for Esau
+                local color = Color(1, 1, 1, clampedCfg.opacity)
+                if playerType == PlayerType.PLAYER_ESAU then
+                    color = Color(1, 0.25, 0.25, clampedCfg.opacity)
+                end
+                headSprite.Color = color
                 local headW = CHAR_ICON_SIZE * layout.scale
                 local headH = CHAR_ICON_SIZE * layout.scale
                 local xOffset = (config.headIconXOffset or 0) * layout.scale
