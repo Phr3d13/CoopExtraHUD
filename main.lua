@@ -1042,14 +1042,19 @@ function ExtraHUD:PostRender()
             RenderItemIcon(itemId, x, y, layout.scale, clampedCfg.opacity)
         end
         if i < #playerIconData then
-            local dividerX = curX + blockW + (INTER_PLAYER_SPACING * layout.scale) / 2 + clampedCfg.dividerOffset
-            local dividerY = startY + clampedCfg.dividerYOffset
+            -- Scale divider offsets with layout.scale
+            local scaledDividerOffset = (clampedCfg.dividerOffset or 0) * layout.scale
+            local scaledDividerYOffset = (clampedCfg.dividerYOffset or 0) * layout.scale
+            local dividerX = curX + blockW + (INTER_PLAYER_SPACING * layout.scale) / 2 + scaledDividerOffset
+            local dividerY = startY + scaledDividerYOffset
             local dividerHeight = layout.totalHeight
             local spriteBaseHeight = 1
             local heightScale = math.max(1, math.floor(dividerHeight + 0.5))
             DividerSprite.Scale = Vector(1, heightScale)
             DividerSprite.Color = Color(1, 1, 1, clampedCfg.opacity)
-            DividerSprite:Render(Vector(dividerX, dividerY), Vector.Zero, Vector.Zero)
+            -- Center the divider horizontally (since it's 1px wide, offset by half its width * scale)
+            local dividerAnchorX = dividerX - 0.5 * layout.scale
+            DividerSprite:Render(Vector(dividerAnchorX, dividerY), Vector.Zero, Vector.Zero)
         end
         curX = curX + blockW + INTER_PLAYER_SPACING * layout.scale
         ::continue_player_loop::
