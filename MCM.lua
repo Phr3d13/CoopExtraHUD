@@ -117,8 +117,12 @@ function M.RegisterConfigMenu()
         end,
     })
 
-    -- Add Show Character Head Icons option
-    ModConfigMenu.AddSetting(MOD, "Display", {
+
+    -- Heads Category
+    ModConfigMenu.AddSpace(MOD, "Heads")
+    ModConfigMenu.AddTitle(MOD, "Heads", "Character Head Icons")
+    -- Show Character Head Icons toggle
+    ModConfigMenu.AddSetting(MOD, "Heads", {
         Type = ModConfigMenu.OptionType.BOOLEAN,
         CurrentSetting = function() return config.showCharHeadIcons end,
         Display = function()
@@ -129,6 +133,34 @@ function M.RegisterConfigMenu()
             config.showCharHeadIcons = v; UpdateCurrentPreset(); SaveConfig();
             if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
         end,
+    })
+    -- Head Icon X Offset
+    ModConfigMenu.AddSetting(MOD, "Heads", {
+        Type = ModConfigMenu.OptionType.NUMBER,
+        CurrentSetting = function() return config.headIconXOffset or 0 end,
+        Display = function()
+            return "Head Icon X Offset: " .. (config.headIconXOffset or 0)
+        end,
+        Info = "Horizontal offset for the head icon (pixels, can be negative).",
+        OnChange = function(v)
+            config.headIconXOffset = v; UpdateCurrentPreset(); SaveConfig();
+            if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
+        end,
+        Minimum = -64, Maximum = 64, Step = 1,
+    })
+    -- Head Icon Y Offset
+    ModConfigMenu.AddSetting(MOD, "Heads", {
+        Type = ModConfigMenu.OptionType.NUMBER,
+        CurrentSetting = function() return config.headIconYOffset or -20 end,
+        Display = function()
+            return "Head Icon Y Offset: " .. (config.headIconYOffset or -20)
+        end,
+        Info = "Vertical offset for the head icon (pixels, can be negative).",
+        OnChange = function(v)
+            config.headIconYOffset = v; UpdateCurrentPreset(); SaveConfig();
+            if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
+        end,
+        Minimum = -64, Maximum = 64, Step = 1,
     })
 
     -- Display Category (renamed from Display Options)

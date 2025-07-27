@@ -5,9 +5,54 @@ if not getConfig then
     end
 end
 -- Forward declarations for functions/objects used before definition
--- Isaac HUD icon and layout constants
 local ICON_SIZE = 32 -- Standard Isaac item icon size in pixels
 local INTER_PLAYER_SPACING = 16 -- Space between player HUD blocks in pixels
+
+-- Character head icon constants
+local CHAR_ICON_ANM2 = "gfx/ui/coopextrahud/coop menu.anm2"
+local CHAR_ICON_ANIMATION = "Main"
+local CHAR_ICON_SIZE = 32
+local CHAR_ICON_OFFSET_Y = -20 -- vertical offset above item icons (was -36)
+local charHeadSpriteCache = {}
+
+-- Map player types to frame indices in the ANM2 (expand as needed)
+local PLAYER_TYPE_TO_FRAME = {
+  [PlayerType.PLAYER_ISAAC] = 1,            -- Isaac
+  [PlayerType.PLAYER_MAGDALENE] = 2,        -- Magdalene
+  [PlayerType.PLAYER_CAIN] = 3,             -- Cain
+  [PlayerType.PLAYER_JUDAS] = 4,            -- Judas
+  [PlayerType.PLAYER_BLUEBABY] = 5,         -- ???
+  [PlayerType.PLAYER_EVE] = 6,              -- Eve
+  [PlayerType.PLAYER_SAMSON] = 7,           -- Samson
+  [PlayerType.PLAYER_AZAZEL] = 8,           -- Azazel
+  [PlayerType.PLAYER_LAZARUS] = 9,          -- Lazarus
+  [PlayerType.PLAYER_EDEN] = 10,            -- Eden
+  [PlayerType.PLAYER_THELOST] = 11,         -- The Lost
+  [PlayerType.PLAYER_LILITH] = 12,          -- Lilith
+  [PlayerType.PLAYER_KEEPER] = 13,          -- Keeper
+  [PlayerType.PLAYER_APOLLYON] = 14,        -- Apollyon
+  [PlayerType.PLAYER_THEFORGOTTEN] = 15,    -- The Forgotten
+  [PlayerType.PLAYER_BETHANY] = 19,         -- Bethany
+  [PlayerType.PLAYER_JACOB] = 20,           -- Jacob
+  [PlayerType.PLAYER_ESAU] = 21,            -- Esau
+  [PlayerType.PLAYER_ISAAC_B] = 22,         -- Tainted Isaac
+  [PlayerType.PLAYER_MAGDALENE_B] = 23,     -- Tainted Magdalene
+  [PlayerType.PLAYER_CAIN_B] = 24,          -- Tainted Cain
+  [PlayerType.PLAYER_JUDAS_B] = 25,         -- Tainted Judas
+  [PlayerType.PLAYER_BLUEBABY_B] = 26,      -- Tainted ???
+  [PlayerType.PLAYER_EVE_B] = 27,           -- Tainted Eve
+  [PlayerType.PLAYER_SAMSON_B] = 28,        -- Tainted Samson
+  [PlayerType.PLAYER_AZAZEL_B] = 29,        -- Tainted Azazel
+  [PlayerType.PLAYER_LAZARUS_B] = 30,       -- Tainted Lazarus
+  [PlayerType.PLAYER_EDEN_B] = 31,          -- Tainted Eden
+  [PlayerType.PLAYER_THELOST_B] = 32,       -- Tainted Lost
+  [PlayerType.PLAYER_LILITH_B] = 33,        -- Tainted Lilith
+  [PlayerType.PLAYER_KEEPER_B] = 34,        -- Tainted Keeper
+  [PlayerType.PLAYER_APOLLYON_B] = 35,      -- Tainted Apollyon
+  [PlayerType.PLAYER_THEFORGOTTEN_B] = 36,  -- Tainted Forgotten
+  [PlayerType.PLAYER_BETHANY_B] = 37,       -- Tainted Bethany
+  [PlayerType.PLAYER_JACOB_B] = 38,         -- Tainted Jacob
+}
 
 -- Isaac modding best practices: define safe constants and stubs for missing globals
 local MIN_COLLECTIBLE_ID = 1
@@ -52,6 +97,8 @@ local defaultConfig = {
     alwaysShowOverlayInMCM = false,
     hideHudOnPause = true,
     showCharHeadIcons = false, -- new default
+    headIconXOffset = 0,      -- new default
+    headIconYOffset = -20,    -- new default
 }
     -- Pass config tables/functions to MCM (always use live config)
     local mcmTables = nil
@@ -97,6 +144,8 @@ local defaultConfig = {
             end
         end
 
+
+
         -- Add MCM entry for hideHudOnPause
         if MCM and type(MCM.AddBooleanSetting) == "function" then
             MCM.AddBooleanSetting({
@@ -108,6 +157,43 @@ local defaultConfig = {
                 default = true,
                 get = function() return config.hideHudOnPause end,
                 set = function(val) config.hideHudOnPause = val; SaveConfig(); MarkHudDirty() end
+            })
+            -- New 'Heads' category for head icon settings
+            MCM.AddBooleanSetting({
+                mod = ExtraHUD,
+                category = "Heads",
+                key = "showCharHeadIcons",
+                title = "Show Character Head Icons",
+                desc = "Display character head icons above each player's item HUD.",
+                default = false,
+                get = function() return config.showCharHeadIcons end,
+                set = function(val) config.showCharHeadIcons = val; SaveConfig(); MarkHudDirty() end
+            })
+            MCM.AddSetting({
+                mod = ExtraHUD,
+                type = "number",
+                category = "Heads",
+                key = "headIconXOffset",
+                title = "Head Icon X Offset",
+                desc = "Horizontal offset for the head icon (pixels, can be negative).",
+                default = 0,
+                min = -64,
+                max = 64,
+                get = function() return config.headIconXOffset or 0 end,
+                set = function(val) config.headIconXOffset = val; SaveConfig(); MarkHudDirty() end
+            })
+            MCM.AddSetting({
+                mod = ExtraHUD,
+                type = "number",
+                category = "Heads",
+                key = "headIconYOffset",
+                title = "Head Icon Y Offset",
+                desc = "Vertical offset for the head icon (pixels, can be negative).",
+                default = -20,
+                min = -64,
+                max = 64,
+                get = function() return config.headIconYOffset or -20 end,
+                set = function(val) config.headIconYOffset = val; SaveConfig(); MarkHudDirty() end
             })
         elseif MCM and type(MCM.AddSetting) == "function" then
             -- Fallback for older MCM: add as a generic setting
@@ -121,6 +207,43 @@ local defaultConfig = {
                 default = true,
                 get = function() return config.hideHudOnPause end,
                 set = function(val) config.hideHudOnPause = val; SaveConfig(); MarkHudDirty() end
+            })
+            MCM.AddSetting({
+                mod = ExtraHUD,
+                type = "boolean",
+                category = "Heads",
+                key = "showCharHeadIcons",
+                title = "Show Character Head Icons",
+                desc = "Display character head icons above each player's item HUD.",
+                default = false,
+                get = function() return config.showCharHeadIcons end,
+                set = function(val) config.showCharHeadIcons = val; SaveConfig(); MarkHudDirty() end
+            })
+            MCM.AddSetting({
+                mod = ExtraHUD,
+                type = "number",
+                category = "Heads",
+                key = "headIconXOffset",
+                title = "Head Icon X Offset",
+                desc = "Horizontal offset for the head icon (pixels, can be negative).",
+                default = 0,
+                min = -64,
+                max = 64,
+                get = function() return config.headIconXOffset or 0 end,
+                set = function(val) config.headIconXOffset = val; SaveConfig(); MarkHudDirty() end
+            })
+            MCM.AddSetting({
+                mod = ExtraHUD,
+                type = "number",
+                category = "Heads",
+                key = "headIconYOffset",
+                title = "Head Icon Y Offset",
+                desc = "Vertical offset for the head icon (pixels, can be negative).",
+                default = -20,
+                min = -64,
+                max = 64,
+                get = function() return config.headIconYOffset or -20 end,
+                set = function(val) config.headIconYOffset = val; SaveConfig(); MarkHudDirty() end
             })
         end
 
@@ -322,12 +445,10 @@ local function TrackAllCurrentCollectibles()
                 table.insert(startingItems, id)
             end
         end
-        -- If pickup order is empty, initialize it with starting items (in order)
-        if not playerPickupOrder[i] or #playerPickupOrder[i] == 0 then
-            playerPickupOrder[i] = {}
-            for _, id in ipairs(startingItems) do
-                table.insert(playerPickupOrder[i], id)
-            end
+        -- Always re-initialize pickup order to match current inventory order
+        playerPickupOrder[i] = {}
+        for _, id in ipairs(startingItems) do
+            table.insert(playerPickupOrder[i], id)
         end
     end
 end
@@ -346,15 +467,8 @@ local lastPlayerCount = 0
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
     local curCount = Game():GetNumPlayers()
     if curCount > lastPlayerCount then
-        for i = lastPlayerCount, curCount - 1 do
-            local player = Isaac.GetPlayer(i)
-            playerTrackedCollectibles[i] = {}
-            for id = 1, MAX_ITEM_ID do
-                if player:HasCollectible(id) and IsValidItem(id) then
-                    playerTrackedCollectibles[i][id] = true
-                end
-            end
-        end
+        -- New player(s) joined, re-initialize tracked collectibles and pickup order for all players
+        TrackAllCurrentCollectibles()
         MarkHudDirty()
     end
     lastPlayerCount = curCount
@@ -793,6 +907,19 @@ local function HandleManualOverlayToggle()
     end
 end
 
+function GetCharHeadSprite(playerType)
+    local frame = PLAYER_TYPE_TO_FRAME[playerType]
+    if frame == nil then return nil end
+    if not charHeadSpriteCache[frame] then
+        local spr = Sprite()
+        spr:Load(CHAR_ICON_ANM2, true)
+        spr:SetFrame(CHAR_ICON_ANIMATION, frame) -- ANM2 frames are 0-based
+        spr:LoadGraphics()
+        charHeadSpriteCache[frame] = spr
+    end
+    return charHeadSpriteCache[frame]
+end
+
 function ExtraHUD:PostRender()
     -- Isaac best practice: Use proper Isaac API game state validation
     local game = Game()
@@ -881,7 +1008,6 @@ function ExtraHUD:PostRender()
     for i, items in ipairs(playerIconData) do
         local cols = layout.playerColumns[i]
         local blockW = layout.blockWidths[i]
-        -- Defensive: skip this player if layout columns or block width are missing/invalid
         if type(cols) ~= "number" or cols < 1 or type(blockW) ~= "number" or blockW < 1 then
             goto continue_player_loop
         end
@@ -889,7 +1015,22 @@ function ExtraHUD:PostRender()
         local maxItems = math.min(#items, 32)
 
         -- Character head icon rendering (if enabled)
-        -- ...character head icon rendering removed...
+        if getConfig().showCharHeadIcons then
+            local player = Isaac.GetPlayer(i - 1)
+            local playerType = player:GetPlayerType()
+            local headSprite = GetCharHeadSprite(playerType)
+            if headSprite then
+                headSprite.Scale = Vector(layout.scale, layout.scale) -- Match item icon scale
+                headSprite.Color = Color(1, 1, 1, clampedCfg.opacity)
+                local headW = CHAR_ICON_SIZE * layout.scale
+                local headH = CHAR_ICON_SIZE * layout.scale
+                local xOffset = (config.headIconXOffset or 0) * layout.scale
+                local yOffset = (config.headIconYOffset or -20) * layout.scale
+                local headX = curX + (blockW - headW) / 2 + xOffset
+                local headY = startY + yOffset
+                headSprite:Render(Vector(headX, headY), Vector.Zero, Vector.Zero)
+            end
+        end
 
         for idx = 1, maxItems do
             local renderIdx = idx
@@ -985,55 +1126,40 @@ function ExtraHUD:PostRender()
     mcmStateCheckCounter = mcmStateCheckCounter + 1
     if mcmStateCheckCounter >= 5 then
         mcmStateCheckCounter = 0
-        
-        -- EID-style automatic overlay detection based on which MCM tab is being viewed
         local mcm = _G['ModConfigMenu']
         local mcmIsOpen = mcm and ((type(mcm.IsVisible) == "function" and mcm.IsVisible()) or (type(mcm.IsVisible) == "boolean" and mcm.IsVisible))
-        
-        -- Only update overlay state when MCM state changes
-        if mcmIsOpen ~= lastMCMState then
+        -- Track previous tab to detect tab/category changes
+        local prevTab = ExtraHUD.MCMCompat_displayingTab or ""
+        local curTab = ""
+        if mcmIsOpen and mcm.CurrentMenuCategory and type(mcm.CurrentMenuCategory) == "string" then
+            curTab = mcm.CurrentMenuCategory
+        end
+        -- Only update overlay state when MCM state or tab changes
+        if mcmIsOpen ~= lastMCMState or curTab ~= prevTab then
             lastMCMState = mcmIsOpen
-            
+            ExtraHUD.MCMCompat_displayingTab = curTab
             if mcmIsOpen then
-                -- MCM just opened - apply automatic overlays based on current tab
-                if ExtraHUD.MCMCompat_displayingTab == "HUD" then
+                -- Apply overlays based on current tab
+                if curTab == "HUD" then
                     ExtraHUD.MCMCompat_displayingOverlay = "hudoffset"
                     ExtraHUD.MCMCompat_selectedOverlay = "hudoffset"
-                elseif ExtraHUD.MCMCompat_displayingTab == "Boundaries" then
+                elseif curTab == "Boundaries" then
                     ExtraHUD.MCMCompat_displayingOverlay = "boundary"
                     ExtraHUD.MCMCompat_selectedOverlay = "boundary"
-                elseif ExtraHUD.MCMCompat_displayingTab == "Minimap" then
+                elseif curTab == "Minimap" then
                     ExtraHUD.MCMCompat_displayingOverlay = "minimap"
                     ExtraHUD.MCMCompat_selectedOverlay = "minimap"
-                elseif ExtraHUD.MCMCompat_displayingTab == "" then
+                else
                     ExtraHUD.MCMCompat_displayingOverlay = ""
                     ExtraHUD.MCMCompat_selectedOverlay = ""
                 end
             else
-                -- MCM just closed - clear automatic overlays but keep manual ones
-                if ExtraHUD.MCMCompat_displayingTab ~= "" then
-                    ExtraHUD.MCMCompat_displayingTab = ""
-                    -- Only clear overlay flags if they weren't set manually
-                    if ExtraHUD.MCMCompat_displayingOverlay == "hudoffset" or ExtraHUD.MCMCompat_displayingOverlay == "boundary" or ExtraHUD.MCMCompat_displayingOverlay == "minimap" then
-                        ExtraHUD.MCMCompat_displayingOverlay = ""
-                        ExtraHUD.MCMCompat_selectedOverlay = ""
-                    end
+                -- MCM just closed - clear overlays
+                ExtraHUD.MCMCompat_displayingTab = ""
+                if ExtraHUD.MCMCompat_displayingOverlay == "hudoffset" or ExtraHUD.MCMCompat_displayingOverlay == "boundary" or ExtraHUD.MCMCompat_displayingOverlay == "minimap" then
+                    ExtraHUD.MCMCompat_displayingOverlay = ""
+                    ExtraHUD.MCMCompat_selectedOverlay = ""
                 end
-            end
-        elseif mcmIsOpen then
-            -- MCM is open and state didn't change - only update overlays if tab changed
-            if ExtraHUD.MCMCompat_displayingTab == "HUD" then
-                ExtraHUD.MCMCompat_displayingOverlay = "hudoffset"
-                ExtraHUD.MCMCompat_selectedOverlay = "hudoffset"
-            elseif ExtraHUD.MCMCompat_displayingTab == "Boundaries" then
-                ExtraHUD.MCMCompat_displayingOverlay = "boundary"
-                ExtraHUD.MCMCompat_selectedOverlay = "boundary"
-            elseif ExtraHUD.MCMCompat_displayingTab == "Minimap" then
-                ExtraHUD.MCMCompat_displayingOverlay = "minimap"
-                ExtraHUD.MCMCompat_selectedOverlay = "minimap"
-            elseif ExtraHUD.MCMCompat_displayingTab == "" then
-                ExtraHUD.MCMCompat_displayingOverlay = ""
-                ExtraHUD.MCMCompat_selectedOverlay = ""
             end
         end
     end
