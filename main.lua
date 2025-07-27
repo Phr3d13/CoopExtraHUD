@@ -9,7 +9,8 @@ end
 local ICON_SIZE = 32 -- Standard Isaac item icon size in pixels
 local INTER_PLAYER_SPACING = 16 -- Space between player HUD blocks in pixels
 
--- Isaac modding best practices: define safe constants and stubs for missing globals
+-- Isaac best practice: Robust optional dependency loading without require
+local MCM
 local MIN_COLLECTIBLE_ID = 1
 local MAX_ITEM_ID = 1000 -- Safe upper bound for modded items, adjust as needed
 local DEFAULT_ITEM_LIMIT = 700 -- Repentance vanilla item count, adjust as needed
@@ -21,13 +22,70 @@ local function DisableVanillaExtraHUD()
     -- Stub: implement vanilla HUD disabling if needed, or leave as no-op
 end
 
+
 local ExtraHUD = RegisterMod("CoopExtraHUD", 1)
+
+-- PlayerType to head icon frame mapping (edit as needed)
+
+-- All vanilla PlayerType constants mapped to default frame (PlayerType+1)
+-- PlayerType to head icon frame mapping (edit as needed)
+-- All vanilla PlayerType constants mapped to default frame (PlayerType+1)
+-- See: https://wofsauge.github.io/IsaacDocs/rep/enums/PlayerType.html
+ExtraHUD.PlayerTypeToHeadFrame = {
+    [0] = 1,   -- Isaac
+    [1] = 2,   -- Magdalene
+    [2] = 3,   -- Cain
+    [3] = 4,   -- Judas
+    [4] = 5,   -- ??? (Blue Baby)
+    [5] = 6,   -- Eve
+    [6] = 7,   -- Samson
+    [7] = 8,   -- Azazel
+    [8] = 9,   -- Lazarus
+    [9] = 10,  -- Eden
+    [10] = 11, -- The Lost
+    [11] = 12, -- Lazarus Risen
+    [12] = 13, -- Black Judas
+    [13] = 14, -- Lilith
+    [14] = 15, -- Keeper
+    [15] = 16, -- Apollyon
+    [16] = 17, -- The Forgotten
+    [17] = 18, -- The Soul
+    [18] = 19, -- Bethany
+    [19] = 20, -- Jacob
+    [20] = 20, -- Esau (uses Jacob's frame, tinted red)
+    [21] = 22, -- Jacob2 (Dogma, not used in normal play)
+    [22] = 23, -- The Soul (Tainted)
+    [23] = 24, -- Isaac (Tainted)
+    [24] = 25, -- Magdalene (Tainted)
+    [25] = 26, -- Cain (Tainted)
+    [26] = 27, -- Judas (Tainted)
+    [27] = 28, -- ??? (Tainted)
+    [28] = 29, -- Eve (Tainted)
+    [29] = 30, -- Samson (Tainted)
+    [30] = 31, -- Azazel (Tainted)
+    [31] = 32, -- Lazarus (Tainted)
+    [32] = 33, -- Eden (Tainted)
+    [33] = 34, -- The Lost (Tainted)
+    [34] = 35, -- Lilith (Tainted)
+    [35] = 36, -- Keeper (Tainted)
+    [36] = 37, -- Apollyon (Tainted)
+    [37] = 38, -- The Forgotten (Tainted)
+    [38] = 39, -- Bethany (Tainted)
+    [39] = 40, -- Jacob (Tainted)
+    [40] = 41, -- Esau (Tainted)
+}
+
+setmetatable(ExtraHUD.PlayerTypeToHeadFrame, {
+    __index = function(t, k)
+        return (type(k) == "number" and k + 1) or 1
+    end
+})
 
 -- Default config values
 -- (Removed duplicate config, configPresets, getConfig definitions)
 
 -- Isaac best practice: Robust optional dependency loading without require
-local MCM = nil
+
 
 local defaultConfig = {
     scale = 0.4, -- updated default
@@ -889,7 +947,27 @@ function ExtraHUD:PostRender()
         local maxItems = math.min(#items, 32)
 
         -- Character head icon rendering (if enabled)
-        -- ...character head icon rendering removed...
+        if clampedCfg.showCharHeadIcons then
+            -- Use pre-defined PlayerTypeToHeadFrame mapping
+            local player = Isaac.GetPlayer(i-1)
+            if player then
+                local headSprite = Sprite()
+                headSprite:Load("gfx/ui/coopextrahud/coop menu.anm2", true)
+                local playerType = player:GetPlayerType() or 0
+                local frame = ExtraHUD.PlayerTypeToHeadFrame[playerType]
+                headSprite:SetFrame("Main", frame)
+                headSprite.Scale = Vector(layout.scale, layout.scale)
+                -- Tint Jacob's icon red for Esau
+                if playerType == PlayerType.PLAYER_ESAU then
+                    headSprite.Color = Color(1,0.2,0.2,clampedCfg.opacity)
+                else
+                    headSprite.Color = Color(1,1,1,clampedCfg.opacity)
+                end
+                local headX = curX - ICON_SIZE * layout.scale - 4 * layout.scale + (clampedCfg.headIconXOffset or 0)
+                local headY = startY + (clampedCfg.headIconYOffset or 0)
+                headSprite:Render(Vector(headX, headY), Vector.Zero, Vector.Zero)
+            end
+        end
 
         for idx = 1, maxItems do
             local renderIdx = idx
@@ -1290,32 +1368,7 @@ if mcmTables then
         end
     end
 
-    -- Add MCM entry for hideHudOnPause
-    if MCM and type(MCM.AddBooleanSetting) == "function" then
-        MCM.AddBooleanSetting({
-            mod = ExtraHUD,
-            category = "General",
-            key = "hideHudOnPause",
-            title = "Hide HUD when paused",
-            desc = "If enabled, the CoopExtraHUD will be hidden when the game is paused.",
-            default = true,
-            get = function() return config.hideHudOnPause end,
-            set = function(val) config.hideHudOnPause = val; SaveConfig(); MarkHudDirty() end
-        })
-    elseif MCM and type(MCM.AddSetting) == "function" then
-        -- Fallback for older MCM: add as a generic setting
-        MCM.AddSetting({
-            mod = ExtraHUD,
-            type = "boolean",
-            category = "General",
-            key = "hideHudOnPause",
-            title = "Hide HUD when paused",
-            desc = "If enabled, the CoopExtraHUD will be hidden when the game is paused.",
-            default = true,
-            get = function() return config.hideHudOnPause end,
-            set = function(val) config.hideHudOnPause = val; SaveConfig(); MarkHudDirty() end
-        })
-    end
+    -- ...removed MCM setting registration for hideHudOnPause (handled in MCM.lua)...
 
     if MCM and MCM.RegisterConfigMenu then
         MCM.RegisterConfigMenu()
