@@ -1,15 +1,42 @@
--- Ensure getConfig is always defined, even if MCM is not loaded
+-- Initialize config and configPresets FIRST to avoid undefined errors
+local config = {}
+local configPresets = {}
+
 if not getConfig then
     function getConfig()
         return config
     end
 end
--- Forward declarations for functions/objects used before definition
--- Isaac HUD icon and layout constants
+
 local ICON_SIZE = 32 -- Standard Isaac item icon size in pixels
 local INTER_PLAYER_SPACING = 16 -- Space between player HUD blocks in pixels
 
--- Isaac best practice: Robust optional dependency loading without require
+local cachedLayout = { valid = false }
+local cachedClampedConfig = nil
+local lastScreenW, lastScreenH = 0, 0
+local hudDirty = true
+local cachedPlayerIconData = nil
+local cachedPlayerCount = 0
+local playerTrackedCollectibles = {}
+local playerPickupOrder = {}
+local itemSpriteCache = {}
+local spriteUsageTracker = {}
+local debugLogs = {}
+local lastAutoResizeScreenW, lastAutoResizeScreenH = 0, 0
+local overlayToggleDebounce = 0
+local currentManualOverlayType = ""
+local lastMCMState = false
+local mcmStateCheckCounter = 0
+local VANILLA_ITEM_LIMIT = nil
+local SaveConfig, LoadConfig, UpdateCurrentPreset
+
+local function MarkHudDirty()
+    hudDirty = true
+    cachedLayout.valid = false
+    cachedClampedConfig = nil
+    lastScreenW, lastScreenH = 0, 0
+end
+
 local MCM
 local MIN_COLLECTIBLE_ID = 1
 local MAX_ITEM_ID = 1000 -- Safe upper bound for modded items, adjust as needed
@@ -946,7 +973,8 @@ function ExtraHUD:PostRender()
         local rows = math.ceil(#items / cols)
         local maxItems = math.min(#items, 32)
 
-        -- Character head icon rendering (if enabled)
+        -- Calculate vertical offset for items if head icon is shown
+        local itemsStartY = startY
         if clampedCfg.showCharHeadIcons then
             -- Use pre-defined PlayerTypeToHeadFrame mapping
             local player = Isaac.GetPlayer(i-1)
@@ -963,9 +991,14 @@ function ExtraHUD:PostRender()
                 else
                     headSprite.Color = Color(1,1,1,clampedCfg.opacity)
                 end
-                local headX = curX - ICON_SIZE * layout.scale - 4 * layout.scale + (clampedCfg.headIconXOffset or 0)
-                local headY = startY + (clampedCfg.headIconYOffset or 0)
+                -- Center head icon above item block
+                local headX = curX + (blockW / 2) - (ICON_SIZE * layout.scale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale)
+                local headY = startY + ((clampedCfg.headIconYOffset or 0) * layout.scale)
                 headSprite:Render(Vector(headX, headY), Vector.Zero, Vector.Zero)
+                -- Move items down by ICON_SIZE * layout.scale to keep spacing consistent as HUD scales
+                -- Add extra gap so the top of the first item sits a bit below the bottom of the head
+                local extraGap = 16 * layout.scale -- tweak this value as needed
+                itemsStartY = headY + ICON_SIZE * layout.scale + (clampedCfg.ySpacing or 0) * layout.scale + extraGap
             end
         end
 
@@ -975,14 +1008,18 @@ function ExtraHUD:PostRender()
             local row = math.floor((renderIdx - 1) / cols)
             local col = (renderIdx - 1) % cols
             local x = curX + col * (ICON_SIZE + clampedCfg.xSpacing) * layout.scale
-            local y = startY + row * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
+            local y = itemsStartY + row * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
             RenderItemIcon(itemId, x, y, layout.scale, clampedCfg.opacity)
         end
         if i < #playerIconData then
-            local dividerX = curX + blockW + (INTER_PLAYER_SPACING * layout.scale) / 2 + clampedCfg.dividerOffset
-            local dividerY = startY + clampedCfg.dividerYOffset
+            -- Center divider exactly halfway between the right edge of this block and the left edge of the next block
+            local thisBlockW = layout.blockWidths[i]
+            local nextBlockW = layout.blockWidths[i+1]
+            -- Divider X: halfway between blocks, baked-in offset -16
+            local dividerX = curX + thisBlockW + (INTER_PLAYER_SPACING * layout.scale) / 2 + ((-16 + (clampedCfg.dividerOffset or 0)) * layout.scale)
+            -- Divider Y: align with top of first item row, baked-in offset -32
+            local dividerY = itemsStartY + ((-32 + (clampedCfg.dividerYOffset or 0)) * layout.scale)
             local dividerHeight = layout.totalHeight
-            local spriteBaseHeight = 1
             local heightScale = math.max(1, math.floor(dividerHeight + 0.5))
             DividerSprite.Scale = Vector(1, heightScale)
             DividerSprite.Color = Color(1, 1, 1, clampedCfg.opacity)
@@ -1275,13 +1312,14 @@ for k, v in pairs(defaultConfig) do
 end
 
 -- Fill missing configPresets keys from defaultConfigPresets (live)
-if configPresets then
-    for mode, preset in pairs(defaultConfigPresets) do
-        if configPresets[mode] == nil then configPresets[mode] = {} end
-        if configPresets[mode] then
-            for k, v in pairs(preset) do
-                if configPresets[mode][k] == nil then configPresets[mode][k] = v end
-            end
+if not configPresets then configPresets = {} end
+for mode, preset in pairs(defaultConfigPresets) do
+    if configPresets and mode ~= nil and configPresets[mode] == nil then
+        configPresets[mode] = {}
+    end
+    if configPresets and mode ~= nil and configPresets[mode] then
+        for k, v in pairs(preset) do
+            if configPresets[mode][k] == nil then configPresets[mode][k] = v end
         end
     end
 end

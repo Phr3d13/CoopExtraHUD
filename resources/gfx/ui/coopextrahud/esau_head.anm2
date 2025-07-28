@@ -1,0 +1,12 @@
+<anm2>
+  <Animations>
+    <Animation Name="Idle">
+      <Frame Index="0"/>
+    </Animation>
+  </Animations>
+  <Layers>
+    <Layer Id="0" Name="EsauHead">
+      <Spritesheet Path="gfx/ui/coopextrahud/esau_head.png"/>
+    </Layer>
+  </Layers>
+</anm2>
