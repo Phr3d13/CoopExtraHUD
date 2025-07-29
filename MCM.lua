@@ -1,3 +1,4 @@
+local ModConfigMenu = _G.ModConfigMenu
 -- MCM.lua: Mod Config Menu logic for CoopExtraHUD
 -- This file contains all MCM registration, option helpers, and overlay flag logic.
 --
@@ -319,6 +320,93 @@ function M.RegisterConfigMenu()
             config.debugOverlay = v; UpdateCurrentPreset(); SaveConfig();
             if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
         end,
+    })
+
+    -- Temporary: Combo Divider Y Offset for Jacob+Esau block
+    -- Combo Divider Offsets for Jacob+Esau block (Y and X grouped together)
+    ModConfigMenu.AddSetting(MOD, "Debug", {
+        Type = ModConfigMenu.OptionType.NUMBER,
+        CurrentSetting = function() return config.comboDividerYOffset or 0 end,
+        Display = function()
+            return "Combo Divider Y Offset: " .. (config.comboDividerYOffset or 0)
+        end,
+        Info = "TEMPORARY: Adjusts the vertical offset (in pixels, scaled) of the horizontal divider between Jacob and Esau in the combo block. Use for fine-tuning.",
+        OnChange = function(v)
+            config.comboDividerYOffset = v; UpdateCurrentPreset(); SaveConfig();
+            if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
+        end,
+        Minimum = -200, Maximum = 200, Step = 1,
+    })
+    ModConfigMenu.AddSetting(MOD, "Debug", {
+        Type = ModConfigMenu.OptionType.NUMBER,
+        CurrentSetting = function() return config.comboDividerXOffset or 0 end,
+        Display = function()
+            return "Combo Divider X Offset: " .. (config.comboDividerXOffset or 0)
+        end,
+        Info = "TEMPORARY: Adjusts the horizontal offset (in pixels, scaled) of the horizontal divider between Jacob and Esau in the combo block. Use for fine-tuning.",
+        OnChange = function(v)
+            config.comboDividerXOffset = v; UpdateCurrentPreset(); SaveConfig();
+            if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
+        end,
+        Minimum = -200, Maximum = 200, Step = 1,
+    })
+    -- Gap between J&E's heads and first items
+    ModConfigMenu.AddSetting(MOD, "Debug", {
+        Type = ModConfigMenu.OptionType.NUMBER,
+        CurrentSetting = function() return config.comboHeadToItemsGap or 8 end,
+        Display = function()
+            return "J&E Head-to-Items Gap: " .. (config.comboHeadToItemsGap or 8)
+        end,
+        Info = "TEMPORARY: Adjusts the gap (in pixels, scaled) between Jacob & Esau's heads and their first item row in the combo block.",
+        OnChange = function(v)
+            config.comboHeadToItemsGap = v; UpdateCurrentPreset(); SaveConfig();
+            if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
+        end,
+        Minimum = 0, Maximum = 64, Step = 1,
+    })
+    -- Gap between Jacob's chunk and Esau's chunk
+    ModConfigMenu.AddSetting(MOD, "Debug", {
+        Type = ModConfigMenu.OptionType.NUMBER,
+        CurrentSetting = function() return config.comboChunkGap or 8 end,
+        Display = function()
+            return "J&E Chunk-to-Chunk Gap: " .. (config.comboChunkGap or 8)
+        end,
+        Info = "TEMPORARY: Adjusts the gap (in pixels, scaled) between Jacob's item chunk and Esau's item chunk in the combo block.",
+        OnChange = function(v)
+            config.comboChunkGap = v; UpdateCurrentPreset(); SaveConfig();
+            if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
+        end,
+        Minimum = -64, Maximum = 64, Step = 1,
+    })
+
+    -- J&E Scale adjuster (comboScale)
+    ModConfigMenu.AddSetting(MOD, "Debug", {
+        Type = ModConfigMenu.OptionType.NUMBER,
+        CurrentSetting = function() return math.floor((config.comboScale or 1.0) * 100) end,
+        Display = function()
+            return "J&E Scale Adjuster: " .. math.floor((config.comboScale or 1.0) * 100) .. "%"
+        end,
+        Info = "TEMPORARY: Adjusts the scale of the entire Jacob+Esau combo block. 100% = normal, lower = smaller, higher = larger.",
+        OnChange = function(v)
+            config.comboScale = v / 100; UpdateCurrentPreset(); SaveConfig();
+            if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
+        end,
+        Minimum = 50, Maximum = 200, Step = 5,
+    })
+
+    -- J&E Chunk Character Divider Y Offset (comboChunkDividerYOffset)
+    ModConfigMenu.AddSetting(MOD, "Debug", {
+        Type = ModConfigMenu.OptionType.NUMBER,
+        CurrentSetting = function() return config.comboChunkDividerYOffset or 44 end,
+        Display = function()
+            return "J&E Chunk Divider Y Offset: " .. (config.comboChunkDividerYOffset or 0)
+        end,
+        Info = "TEMPORARY: Adjusts the vertical offset (in pixels, scaled) of the vertical divider between the Jacob+Esau combo block and the next player block. Only affects the divider after the J&E chunk.",
+        OnChange = function(v)
+            config.comboChunkDividerYOffset = v; UpdateCurrentPreset(); SaveConfig();
+            if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
+        end,
+        Minimum = -200, Maximum = 200, Step = 1,
     })
 
     -- Add Hide HUD on Pause option to Display category
