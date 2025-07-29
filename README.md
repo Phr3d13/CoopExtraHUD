@@ -5,7 +5,7 @@ Choose between two HUD styles:
 - **Updated Preset:** Centered vertically along the right edge for balanced, easy viewing.  
 - **Vanilla+ Preset:** Right-justified just below the map area, keeping that classic feel.
 
-The HUD dynamically scales with the number of players and items, plus you can customize nearly everything — scale, opacity, spacing, offsets, and divider lines — all in-game via the Mod Config Menu.
+The HUD dynamically scales with the number of players and items, plus you can customize nearly everything — scale, opacity, spacing, offsets, divider lines, and more — all in-game via the Mod Config Menu (MCM).
 
 ---
 
@@ -16,21 +16,24 @@ The HUD dynamically scales with the number of players and items, plus you can cu
 - **True Pickup Order:** Tracks and displays collectibles in actual pickup order per player
 - **Dual HUD Modes:** Two preset layouts with different positioning and visual styles
 - **Smart Scaling:** Auto-scaling for different screen sizes, item counts, and resolutions
-- **Full Customization:** Adjustable scale, opacity, spacing, offsets, and divider positioning
+- **Full Customization:** Adjustable scale, opacity, spacing, offsets, divider positioning, and more
+- **Per-Preset Reset:** Instantly reset all display settings to defaults for the current HUD mode
+- **Auto-Adjust on Resize:** Option to keep HUD position relative when resizing the game window
+- **Minimap Auto-Align:** One-click button to snap minimap to top-right and avoid overlap
+- **Debug Overlay:** Toggleable overlay for visualizing HUD, boundaries, and minimap areas
+- **Jacob & Esau Combo Block Tuning:** Fine-tune divider offsets, chunk gaps, and scale for J&E's shared HUD block
 - **Visual Helpers:** Automatic overlay guides when adjusting settings (red=boundary, cyan=minimap, green=HUD position)
 - **Minimap Avoidance:** Intelligent positioning to avoid overlapping with minimap areas
-- **Auto-Resize Support:** Maintains relative positioning when game window is resized
 - **Preset Management:** Save/load custom settings separately for each HUD mode with reset options
 - **Performance Optimized:** Efficient caching system with minimal frame-by-frame overhead
-- **Debug Tools:** Optional overlay system for positioning and troubleshooting
-- **Mod Config Menu Integration:** Full MCM support with organized categories and real-time preview
+- **Mod Config Menu Integration:** Full MCM support with organized categories, real-time preview, and overlay helpers
 - **Manual Controls:** Keyboard shortcuts (B/M/H/N keys) for quick overlay toggling
 
 ---
 
 ## Work in Progress / Planned
 
-- **Additional Presets:** More HUD layouts and positioning options
+- **Additional Presets:** More HUD layouts and positioning options (e.g., 2-above-2-below, grid, etc.)
 - **Enhanced Scaling:** Better support for unusual screen setups and ultra-wide displays
 - **Advanced Customization:** Per-player color coding and additional visual options
 
