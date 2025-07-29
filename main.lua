@@ -116,10 +116,10 @@ setmetatable(ExtraHUD.PlayerTypeToHeadFrame, {
 
 local defaultConfig = {
     scale = 0.4, -- updated default
-    xSpacing = 5, -- updated default
-    ySpacing = 5, -- updated default
-    dividerOffset = -7, -- updated default
-    dividerYOffset = -14, -- updated default
+    xSpacing = 0, -- updated default
+    ySpacing = 0, -- updated default
+    dividerOffset = 0, -- updated default
+    dividerYOffset = 0, -- updated default
     comboDividerXOffset = 0, -- new option for Jacob+Esau divider X offset
     xOffset = 0, -- updated default
     yOffset = 0, -- updated default
@@ -137,8 +137,8 @@ local defaultConfig = {
     minimapPadding = 2,
     alwaysShowOverlayInMCM = false,
     hideHudOnPause = true,
-    showCharHeadIcons = false, -- new default
-    comboScale = 1.0, -- J&E Scale adjuster (default: 1.0)
+    showCharHeadIcons = true, -- new default
+    comboScale = 0.9, -- J&E Scale adjuster (default: 1.0)
     comboChunkDividerYOffset = 0, -- J&E chunk character divider offset (default: 0)
 }
     -- Pass config tables/functions to MCM (always use live config)
