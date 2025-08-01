@@ -26,16 +26,66 @@ function M.Init(args)
         ExtraHUD.MCMCompat_displayingTab = ""
     end
     
-    return {
+    local returnTable = {
         config = config,
         configPresets = configPresets,
         SaveConfig = SaveConfig,
         LoadConfig = LoadConfig,
         UpdateCurrentPreset = UpdateCurrentPreset,
+        UpdateMCMOverlayDisplay = M.UpdateMCMOverlayDisplay,
     }
+    
+    return returnTable
 end
 
 local configMenuRegistered = false
+
+-- MCM focus tracking for overlay system
+function M.UpdateMCMOverlayDisplay()
+    if not ModConfigMenu then
+        return
+    end
+    
+    if not ExtraHUD then
+        return
+    end
+    
+    -- Check if GetCurrentFocus exists
+    if not ModConfigMenu.GetCurrentFocus then
+        ExtraHUD.MCMCompat_displayingTab = ""
+        return
+    end
+    
+    -- Use the new GetCurrentFocus API to detect what's being hovered
+    local focus = ModConfigMenu.GetCurrentFocus()
+    if not focus then
+        ExtraHUD.MCMCompat_displayingTab = ""
+        return
+    end
+    
+    if not focus.category or not focus.subcategory then
+        ExtraHUD.MCMCompat_displayingTab = ""
+        return
+    end
+    
+    -- Check if we're in the CoopExtraHUD category
+    if focus.category.Name == "CoopExtraHUD" then
+        local subcategoryName = focus.subcategory.Name or ""
+        
+        -- Map subcategory names to overlay types
+        if subcategoryName == "HUD" then
+            ExtraHUD.MCMCompat_displayingTab = "hud_offset"
+        elseif subcategoryName == "Boundaries" then
+            ExtraHUD.MCMCompat_displayingTab = "boundary"
+        elseif subcategoryName == "Minimap" then
+            ExtraHUD.MCMCompat_displayingTab = "minimap"
+        else
+            ExtraHUD.MCMCompat_displayingTab = ""
+        end
+    else
+        ExtraHUD.MCMCompat_displayingTab = ""
+    end
+end
 
 function M.RegisterConfigMenu()
     if configMenuRegistered then return end  -- Prevent duplicate registration

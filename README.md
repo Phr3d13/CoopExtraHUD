@@ -26,7 +26,9 @@ The HUD dynamically scales with the number of players and items, plus you can cu
 - **Minimap Avoidance:** Intelligent positioning to avoid overlapping with minimap areas
 - **Preset Management:** Save/load custom settings separately for each HUD mode with reset options
 - **Performance Optimized:** Efficient caching system with minimal frame-by-frame overhead
-- **Mod Config Menu Integration:** Full MCM support with organized categories, real-time preview, and overlay helpers
+- **Enhanced MCM Integration:** Full MCM support with smart overlay helpers that automatically appear when hovering over relevant settings
+- **Intelligent Overlay System:** Context-aware visual guides show exactly what each setting affects (HUD Position, Boundaries, Minimap areas)
+- **Real-Time Preview:** All changes instantly visible with automatic overlay detection based on current MCM tab
 - **Manual Controls:** Keyboard shortcuts (B/M/H/N keys) for quick overlay toggling
 
 ---
@@ -42,7 +44,10 @@ The HUD dynamically scales with the number of players and items, plus you can cu
 ## Controls
 
 **Automatic Overlays (MCM):**
-- Navigate to HUD/Boundaries/Minimap tabs to see positioning helpers automatically
+- Navigate to **HUD** tab to see HUD position helpers (green corners)
+- Navigate to **Boundaries** tab to see boundary helpers (red corners)  
+- Navigate to **Minimap** tab to see minimap area helpers (cyan corners)
+- Overlays automatically appear when hovering over relevant settings
 
 **Manual Overlays (Keyboard):**
 - **B** - Toggle boundary overlay (red corners)

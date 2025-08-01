@@ -25,7 +25,6 @@ local spriteUsageTracker = {}
 -- Character head sprite cache to prevent memory leaks from creating sprites every frame
 local characterHeadSpriteCache = {}
 
-local debugLogs = {}
 local lastAutoResizeScreenW, lastAutoResizeScreenH = 0, 0
 local overlayToggleDebounce = 0
 local currentManualOverlayType = ""
@@ -33,6 +32,7 @@ local lastMCMState = false
 local mcmStateCheckCounter = 0
 local VANILLA_ITEM_LIMIT = nil
 local SaveConfig, LoadConfig, UpdateCurrentPreset
+local mcmTables = nil -- MCM integration variable
 
 local function MarkHudDirty()
     hudDirty = true
@@ -146,10 +146,103 @@ local defaultConfig = {
     comboScale = 0.9, -- J&E Scale adjuster (default: 1.0)
     comboChunkDividerYOffset = 0, -- J&E chunk character divider offset (default: 0)
 }
+
+-- Isaac best practice: Load our MCM module (same mod, always safe)
+local MCMModule = include("MCM")
+if MCMModule and type(MCMModule.Init) == "function" then
+    MCM = MCMModule
+else
+    print("[CoopExtraHUD] Failed to load MCM module.")
+end
+
+-- Initialize config with default values before MCM.Init
+for k, v in pairs(defaultConfig) do
+    if config[k] == nil then config[k] = v end
+end
+
+-- Initialize configPresets with default values
+if not configPresets[false] then configPresets[false] = {} end
+if not configPresets[true] then configPresets[true] = {} end
+
+-- Define config functions before MCM.Init (they need SerializeAllConfigs and DeserializeAllConfigs)
+-- Config serialization (optimized with table.concat)
+local function SerializeConfig(tbl)
+    local parts = {}
+    for k, v in pairs(tbl) do
+        table.insert(parts, k .. "=" .. tostring(v) .. ";")
+    end
+    return table.concat(parts)
+end
+
+local function DeserializeConfig(data)
+    local tbl = {}
+    for k, v in string.gmatch(data, "([%w_]+)=([^;]+);") do
+        if v == "true" then tbl[k] = true
+        elseif v == "false" then tbl[k] = false
+        else local num = tonumber(v); if num then tbl[k] = num else tbl[k] = v end
+        end
+    end
+    return tbl
+end
+
+local function SerializeAllConfigs()
+    if not config or not configPresets or not configPresets[false] or not configPresets[true] then
+        return ""
+    end
+    local str = "[config]" .. SerializeConfig(config) .. "[preset_false]" .. SerializeConfig(configPresets[false]) .. "[preset_true]" .. SerializeConfig(configPresets[true])
+    return str
+end
+
+local function DeserializeAllConfigs(data)
+    local configStr = data:match("%[config%](.-)%[preset_false%]") or ""
+    local presetFalseStr = data:match("%[preset_false%](.-)%[preset_true%]") or ""
+    local presetTrueStr = data:match("%[preset_true%](.*)$") or ""
+    return {
+        config = DeserializeConfig(configStr),
+        preset_false = DeserializeConfig(presetFalseStr),
+        preset_true = DeserializeConfig(presetTrueStr)
+    }
+end
+
+-- Save/load helpers using Isaac's mod data API
+local function SaveConfigLocal()
+    if config then
+        ExtraHUD:SaveData(SerializeAllConfigs())
+        -- Clear caches when config changes
+        cachedClampedConfig = nil
+        MarkHudDirty()
+    end
+end
+
+local function LoadConfigLocal()
+    if ExtraHUD:HasData() then
+        local data = ExtraHUD:LoadData()
+        local all = DeserializeAllConfigs(data)
+        if all and all.config and config then
+            for k, v in pairs(all.config) do config[k] = v end
+        end
+        if all and all.preset_false and configPresets and configPresets[false] then
+            for k, v in pairs(all.preset_false) do configPresets[false][k] = v end
+        end
+        if all and all.preset_true and configPresets and configPresets[true] then
+            for k, v in pairs(all.preset_true) do configPresets[true][k] = v end
+        end
+    end
+end
+
+local function UpdateCurrentPresetLocal()
+    -- Optionally update configPresets based on current config/hudMode
+    -- (implement as needed)
+end
+
+-- Assign these before MCM.Init
+SaveConfig = SaveConfigLocal
+LoadConfig = LoadConfigLocal
+UpdateCurrentPreset = UpdateCurrentPresetLocal
+
     -- Pass config tables/functions to MCM (always use live config)
-    local mcmTables = nil
     if MCM and MCM.Init then
-        mcmTables = MCM.Init({
+        local initResult = MCM.Init({
             ExtraHUD = ExtraHUD,
             config = config,
             configPresets = configPresets,
@@ -165,6 +258,9 @@ local defaultConfig = {
                 MarkHudDirty()
             end,
         })
+        mcmTables = initResult
+    else
+        print("[CoopExtraHUD] MCM.Init not available")
     end
 
     if mcmTables then
@@ -258,14 +354,6 @@ local function IsValidItem(itemId)
            collectible.GfxFileName ~= nil and 
            collectible.GfxFileName ~= "" and
            collectible.GfxFileName ~= "gfx/items/collectibles/questionmark.png"
-end
-
--- Debug log table and function (must be defined before any usage)
-local debugLogs = {}
-local function AddDebugLog(msg)
-    -- Suppress all debug logging to log.txt except for MCM function list (handled separately)
-    table.insert(debugLogs, 1, msg)
-    if #debugLogs > 5 then table.remove(debugLogs) end
 end
 
 -- Sprite cache for item icons with cleanup tracking
@@ -372,10 +460,7 @@ local function CleanupUnusedSprites()
         end
     end
     
-    -- Log cleanup if significant number of sprites were removed
-    if removedCount > 10 then
-        AddDebugLog("Cleaned up " .. removedCount .. " unused item sprites")
-    end
+    -- Cleanup complete (removed unused item sprites)
 end
 
 -- Simple direct tracking of player collectibles
@@ -425,8 +510,6 @@ local function UpdatePlayerIconData()
     local game = Game()
     local totalPlayers = game:GetNumPlayers()
     cachedPlayerIconData = {}
-    -- Debug logging to verify player count
-    AddDebugLog("UpdatePlayerIconData: totalPlayers = " .. totalPlayers)
     -- Only clear sprite usage tracker if player count or pickup order changed
     local shouldCleanup = false
     if not spriteUsageTracker or #spriteUsageTracker > 2 * totalPlayers then
@@ -458,8 +541,6 @@ local function UpdatePlayerIconData()
                 table.insert(cachedPlayerIconData[i + 1], id)
             end
         end
-        -- Debug logging to verify each player's items
-        AddDebugLog("Player " .. i .. " has " .. #cachedPlayerIconData[i + 1] .. " items")
     end
     cachedPlayerCount = totalPlayers
     hudDirty = false
@@ -564,9 +645,19 @@ end
 
 local lastPlayerCount = 0
 
+-- Optimized: Only update pickup order when items actually change, not every frame
+-- Use a debounced approach to avoid excessive updates
+local pickupOrderUpdateDebounce = 0
+local needsPickupOrderUpdate = false
+
 -- Combined MC_POST_UPDATE: handle both player count changes and debounced pickup updates
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
     local curCount = Game():GetNumPlayers()
+    
+    -- Initialize lastPlayerCount if nil
+    if not lastPlayerCount then
+        lastPlayerCount = 0
+    end
     
     -- Handle new players joining (optimized)
     if curCount > lastPlayerCount then
@@ -591,11 +682,6 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
     end
 end, CallbackPriority and CallbackPriority.LATE or nil)
 
--- Optimized: Only update pickup order when items actually change, not every frame
--- Use a debounced approach to avoid excessive updates
-local pickupOrderUpdateDebounce = 0
-local needsPickupOrderUpdate = false
-
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_PEFFECT_UPDATE, function(_, player)
     -- Only mark for update, don't do expensive scanning every frame
     if pickupOrderUpdateDebounce <= 0 then
@@ -618,81 +704,6 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_PICKUP_UPDATE, function(_, pickup)
     end
 end)
 
-
--- Config serialization (optimized with table.concat)
-local function SerializeConfig(tbl)
-    local parts = {}
-    for k, v in pairs(tbl) do
-        table.insert(parts, k .. "=" .. tostring(v) .. ";")
-    end
-    return table.concat(parts)
-end
-
-local function DeserializeConfig(data)
-    local tbl = {}
-    for k, v in string.gmatch(data, "([%w_]+)=([^;]+);") do
-        if v == "true" then tbl[k] = true
-        elseif v == "false" then tbl[k] = false
-        else local num = tonumber(v); if num then tbl[k] = num else tbl[k] = v end
-        end
-    end
-    return tbl
-end
-
-local function SerializeAllConfigs()
-    if not config or not configPresets or not configPresets[false] or not configPresets[true] then
-        return ""
-    end
-    local str = "[config]" .. SerializeConfig(config) .. "[preset_false]" .. SerializeConfig(configPresets[false]) .. "[preset_true]" .. SerializeConfig(configPresets[true])
-    return str
-end
-
-local function DeserializeAllConfigs(data)
-    local configStr = data:match("%[config%](.-)%[preset_false%]") or ""
-    local presetFalseStr = data:match("%[preset_false%](.-)%[preset_true%]") or ""
-    local presetTrueStr = data:match("%[preset_true%](.*)$") or ""
-    return {
-        config = DeserializeConfig(configStr),
-        preset_false = DeserializeConfig(presetFalseStr),
-        preset_true = DeserializeConfig(presetTrueStr)
-    }
-end
-
--- Save/load helpers using Isaac's mod data API
-local function SaveConfig()
-    if config then
-        ExtraHUD:SaveData(SerializeAllConfigs())
-        -- Clear caches when config changes
-        cachedClampedConfig = nil
-        MarkHudDirty()
-    end
-end
-
-local function LoadConfig()
-    if ExtraHUD:HasData() then
-        local data = ExtraHUD:LoadData()
-        local all = DeserializeAllConfigs(data)
-        if all and all.config and config then
-            for k, v in pairs(all.config) do config[k] = v end
-        end
-        if all and all.preset_false and configPresets and configPresets[false] then
-            for k, v in pairs(all.preset_false) do configPresets[false][k] = v end
-        end
-        if all and all.preset_true and configPresets and configPresets[true] then
-            for k, v in pairs(all.preset_true) do configPresets[true][k] = v end
-        end
-    end
-end
-
-local function UpdateCurrentPreset()
-    -- Optionally update configPresets based on current config/hudMode
-    -- (implement as needed)
-end
-
--- Assign these before MCM.Init
-SaveConfig = SaveConfig
-LoadConfig = LoadConfig
-UpdateCurrentPreset = UpdateCurrentPreset
 
 -- Render a single item icon (now uses cache with nil checks for modded items)
 local function RenderItemIcon(itemId, x, y, scale, opa)
@@ -761,6 +772,7 @@ ExtraHUD.MCMCompat_displayingTab = ""
 -- Cache MCM state to avoid checking every frame
 local lastMCMState = false
 local mcmStateCheckCounter = 0
+-- MCM integration variable (declared at module level above - don't redeclare here)
 -- Sprite-based overlay system (following MCM exact implementation)
 local function GetMenuAnm2Sprite(animation, frame)
     local sprite = Sprite()
@@ -1475,6 +1487,11 @@ function ExtraHUD:PostRender()
     if mcmStateCheckCounter >= 5 then
         mcmStateCheckCounter = 0
         
+        -- Update MCM focus tracking for overlay detection
+        if mcmTables and mcmTables.UpdateMCMOverlayDisplay then
+            mcmTables.UpdateMCMOverlayDisplay()
+        end
+        
         -- EID-style automatic overlay detection based on which MCM tab is being viewed
         local mcm = _G['ModConfigMenu']
         local mcmIsOpen = mcm and ((type(mcm.IsVisible) == "function" and mcm.IsVisible()) or (type(mcm.IsVisible) == "boolean" and mcm.IsVisible))
@@ -1485,13 +1502,13 @@ function ExtraHUD:PostRender()
             
             if mcmIsOpen then
                 -- MCM just opened - apply automatic overlays based on current tab
-                if ExtraHUD.MCMCompat_displayingTab == "HUD" then
+                if ExtraHUD.MCMCompat_displayingTab == "hud_offset" then
                     ExtraHUD.MCMCompat_displayingOverlay = "hudoffset"
                     ExtraHUD.MCMCompat_selectedOverlay = "hudoffset"
-                elseif ExtraHUD.MCMCompat_displayingTab == "Boundaries" then
+                elseif ExtraHUD.MCMCompat_displayingTab == "boundary" then
                     ExtraHUD.MCMCompat_displayingOverlay = "boundary"
                     ExtraHUD.MCMCompat_selectedOverlay = "boundary"
-                elseif ExtraHUD.MCMCompat_displayingTab == "Minimap" then
+                elseif ExtraHUD.MCMCompat_displayingTab == "minimap" then
                     ExtraHUD.MCMCompat_displayingOverlay = "minimap"
                     ExtraHUD.MCMCompat_selectedOverlay = "minimap"
                 elseif ExtraHUD.MCMCompat_displayingTab == "" then
@@ -1511,13 +1528,13 @@ function ExtraHUD:PostRender()
             end
         elseif mcmIsOpen then
             -- MCM is open and state didn't change - only update overlays if tab changed
-            if ExtraHUD.MCMCompat_displayingTab == "HUD" then
+            if ExtraHUD.MCMCompat_displayingTab == "hud_offset" then
                 ExtraHUD.MCMCompat_displayingOverlay = "hudoffset"
                 ExtraHUD.MCMCompat_selectedOverlay = "hudoffset"
-            elseif ExtraHUD.MCMCompat_displayingTab == "Boundaries" then
+            elseif ExtraHUD.MCMCompat_displayingTab == "boundary" then
                 ExtraHUD.MCMCompat_displayingOverlay = "boundary"
                 ExtraHUD.MCMCompat_selectedOverlay = "boundary"
-            elseif ExtraHUD.MCMCompat_displayingTab == "Minimap" then
+            elseif ExtraHUD.MCMCompat_displayingTab == "minimap" then
                 ExtraHUD.MCMCompat_displayingOverlay = "minimap"
                 ExtraHUD.MCMCompat_selectedOverlay = "minimap"
             elseif ExtraHUD.MCMCompat_displayingTab == "" then
@@ -1573,8 +1590,6 @@ function ExtraHUD:PostRender()
                 HudOffsetVisualBottomRight:Render(Vector(bx + bw - 32, by + bh - 32), vecZero, vecZero)
             end
             Isaac.RenderText("HUD Boundary", bx+4, by+4, 1, 0, 0, 1)
-        else
-            AddDebugLog("[Overlay] showBoundary: boundary config value(s) nil or zero, skipping overlay")
         end
     elseif showMinimap then
         -- Use live config for overlay rendering to ensure real-time updates
@@ -1603,8 +1618,6 @@ function ExtraHUD:PostRender()
                 HudOffsetVisualBottomRight:Render(Vector(mx + mw - 32, my + mh - 32), vecZero, vecZero)
             end
             Isaac.RenderText("Minimap Area", mx+4, my+4, 0, 1, 1, 1)
-        else
-            AddDebugLog("[Overlay] showMinimap: minimap config value(s) nil or zero, skipping overlay")
         end
     elseif showHudOffset then
         -- Show HUD offset overlay - green corners to indicate where the HUD is positioned
@@ -1640,24 +1653,9 @@ function ExtraHUD:PostRender()
                 HudOffsetVisualBottomRight:Render(Vector(actualHudX + hudBoundaryW - 32, actualHudY + hudBoundaryH - 32), vecZero, vecZero)
             end
             Isaac.RenderText("HUD Position", actualHudX+4, actualHudY+4, 0, 1, 0, 1)
-        else
-            AddDebugLog("[Overlay] showHudOffset: boundary config value(s) nil or zero, skipping overlay")
         end
     end
 end
-
---[[
-Isaac Modding Best Practices Applied:
-- ✅ No Isaac.ExecuteCommand (uses Options.ExtraHUDStyle instead)
-- ✅ No require() for optional dependencies (robust MCM loading)
-- ✅ Explicit callback priorities for deterministic execution order
-- ✅ Comprehensive game state validation (pause, menu, room types)
-- ✅ Resource validation with proper constants and safe fallbacks
-- ✅ Enhanced item validation with Isaac API best practices
-- ✅ Safe Isaac API access patterns with nil checks
-- ✅ Performance optimization with proper constant usage
-- ✅ Robust optional dependency loading without require
-]]
 
 -- Also disable vanilla ExtraHUD on mod load (first load)
 DisableVanillaExtraHUD()
@@ -1665,132 +1663,10 @@ DisableVanillaExtraHUD()
 -- Isaac best practice: Use explicit callback priority for render callbacks
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_RENDER, ExtraHUD.PostRender, CallbackPriority and CallbackPriority.LATE or nil)
 
--- MCM integration (automatic detection removed, manual toggles only)
-
--- Isaac best practice: Robust optional dependency loading without require
-local MCM = nil
-
--- Always create a basic stub first to prevent any nil access errors
-MCM = {
-    Init = function(args) return args end,
-    RegisterConfigMenu = function() end
-}
-
--- Robust config/configPresets initialization and loading (always use live config for all MCM/config sections)
-if not config then config = {} end
-if not configPresets then configPresets = {} end
-
--- Fill missing config keys from defaultConfig (live)
-for k, v in pairs(defaultConfig) do
-    if config[k] == nil then config[k] = v end
-end
-
--- Fill missing configPresets keys from defaultConfigPresets (live)
-if not configPresets then configPresets = {} end
-for mode, preset in pairs(defaultConfigPresets) do
-    if configPresets and mode ~= nil and configPresets[mode] == nil then
-        configPresets[mode] = {}
-    end
-    if configPresets and mode ~= nil and configPresets[mode] then
-        for k, v in pairs(preset) do
-            if configPresets[mode][k] == nil then configPresets[mode][k] = v end
-        end
-    end
-end
-
--- Initialize function placeholders
-if not SaveConfig then SaveConfig = function() end end
-if not LoadConfig then LoadConfig = function() end end
-if not UpdateCurrentPreset then UpdateCurrentPreset = function() end end
-
--- Load config from disk on mod load (before MCM.Init), always update live config
-if ExtraHUD and ExtraHUD.HasData and ExtraHUD:HasData() then
-    local data = ExtraHUD:LoadData()
-    local all = DeserializeAllConfigs(data)
-    if all and all.config then
-        for k, v in pairs(all.config) do config[k] = v end
-    end
-    if all and all.preset_false then
-        for k, v in pairs(all.preset_false) do configPresets[false][k] = v end
-    end
-    if all and all.preset_true then
-        for k, v in pairs(all.preset_true) do configPresets[true][k] = v end
-    end
-end
-
-
 -- Isaac best practice: Use early priority for config saving to ensure it happens before other cleanup
 ExtraHUD:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, function()
     SaveConfig()
 end, CallbackPriority and CallbackPriority.EARLY or nil)
 
--- Isaac best practice: Load our MCM module (same mod, always safe)
-local MCMModule = include("MCM")
-if MCMModule and type(MCMModule.Init) == "function" then
-    MCM = MCMModule
-else
-    print("[CoopExtraHUD] Failed to load MCM module.")
-end
-
--- Isaac best practice: MCM integration at mod load time
--- removed stray do
-    
-    -- Pass config tables/functions to MCM (always use live config)
--- Pass config tables/functions to MCM (always use live config)
-local mcmTables = nil
-if MCM and MCM.Init then
-    mcmTables = MCM.Init({
-        ExtraHUD = ExtraHUD,
-        config = config,
-        configPresets = configPresets,
-        SaveConfig = SaveConfig,
-        LoadConfig = LoadConfig,
-        UpdateCurrentPreset = UpdateCurrentPreset,
-        getConfig = getConfig,
-        MarkHudDirty = MarkHudDirty,
-        OnOverlayAdjusterMoved = function()
-            cachedClampedConfig = nil
-            cachedLayout.valid = false
-            lastScreenW, lastScreenH = 0, 0
-            MarkHudDirty()
-        end,
-    })
-end
-
-if mcmTables then
-    config = mcmTables.config
-    configPresets = mcmTables.configPresets
-    SaveConfig = mcmTables.SaveConfig
-    LoadConfig = mcmTables.LoadConfig
-    UpdateCurrentPreset = mcmTables.UpdateCurrentPreset
-    if type(mcmTables.getConfig) == "function" then
-        getConfig = mcmTables.getConfig
-    end
-    if type(mcmTables.MarkHudDirty) == "function" then
-        ExtraHUD.MarkHudDirty = mcmTables.MarkHudDirty
-    end
-    if type(mcmTables.OnOverlayAdjusterMoved) == "function" then
-        ExtraHUD.OnOverlayAdjusterMoved = mcmTables.OnOverlayAdjusterMoved
-    else
-        ExtraHUD.OnOverlayAdjusterMoved = function()
-            cachedClampedConfig = nil
-            cachedLayout.valid = false
-            lastScreenW, lastScreenH = 0, 0
-            MarkHudDirty()
-        end
-    end
-
-    -- ...removed MCM setting registration for hideHudOnPause (handled in MCM.lua)...
-
-    if MCM and MCM.RegisterConfigMenu then
-        MCM.RegisterConfigMenu()
-    end
-else
-    ExtraHUD.OnOverlayAdjusterMoved = function()
-        cachedClampedConfig = nil
-        cachedLayout.valid = false
-        lastScreenW, lastScreenH = 0, 0
-        MarkHudDirty()
-    end
-end
--- Mod loading complete
+-- Load saved config on startup
+LoadConfig()
