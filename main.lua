@@ -119,32 +119,47 @@ setmetatable(ExtraHUD.PlayerTypeToHeadFrame, {
 
 
 local defaultConfig = {
-    scale = 0.4, -- updated default
+    scale = 0.32, -- updated from user's optimized settings
     xSpacing = 0, -- updated default
     ySpacing = 0, -- updated default
     dividerOffset = 0, -- updated default
     dividerYOffset = 0, -- updated default
-    comboDividerXOffset = 0, -- new option for Jacob+Esau divider X offset
+    comboDividerXOffset = -16, -- updated from user's optimized settings
+    comboDividerYOffset = -10, -- updated from user's optimized settings
     xOffset = 0, -- updated default
     yOffset = 0, -- updated default
     opacity = 0.6, -- updated default
     mapYOffset = 100,
     hudMode = true,
-    boundaryX = 215, -- updated default
-    boundaryY = 49, -- updated default
-    boundaryW = 270, -- updated default
-    boundaryH = 184, -- updated default
-    minimapX = 344, -- updated default
-    minimapY = 0, -- updated default
+    boundaryX = 284, -- updated from user's optimized settings
+    boundaryY = 50, -- updated from user's optimized settings
+    boundaryW = 196, -- updated from user's optimized settings
+    boundaryH = 170, -- updated from user's optimized settings
+    minimapX = 331, -- updated from user's optimized settings
+    minimapY = 8, -- updated from user's optimized settings
     minimapW = 141, -- updated default
     minimapH = 101, -- updated default
     minimapPadding = 2,
     alwaysShowOverlayInMCM = false,
-    hideHudOnPause = true,
+    hideHudOnPause = false, -- updated from user's optimized settings
     showCharHeadIcons = true, -- new default
-    itemLayoutMode = "4_across", -- Item layout: "4_across" or "2x2_grid"
-    comboScale = 0.9, -- J&E Scale adjuster (default: 1.0)
-    comboChunkDividerYOffset = 0, -- J&E chunk character divider offset (default: 0)
+    itemLayoutMode = "2x2_grid", -- updated from user's optimized settings
+    comboScale = 1.0, -- updated from user's optimized settings
+    comboChunkGap = -20, -- updated from user's optimized settings
+    comboChunkDividerYOffset = -14, -- updated from user's optimized settings
+    comboHeadToItemsGap = 20, -- updated from user's optimized settings
+    autoAdjustOnResize = true, -- updated from user's optimized settings
+    debugOverlay = false, -- updated from user's optimized settings
+    disableVanillaExtraHUD = true, -- updated from user's optimized settings
+    maxItemsPerPlayer = 32, -- updated from user's optimized settings
+    moddedItemScanLimit = 1000, -- updated from user's optimized settings
+    headIconXOffset = 0, -- updated from user's optimized settings
+    headIconYOffset = 0, -- updated from user's optimized settings
+    iconOffsetX = 1, -- updated from user's optimized settings
+    iconOffsetY = 24, -- updated from user's optimized settings
+    dividerXOffset = 0, -- updated from user's optimized settings
+    horizontalDividerXOffset = 0, -- updated from user's optimized settings
+    horizontalDividerYOffset = 0, -- updated from user's optimized settings
 }
 
 -- Isaac best practice: Load our MCM module (same mod, always safe)
@@ -997,12 +1012,12 @@ local function UpdateLayout(playerIconData, cfg, screenW, screenH)
 end
 
 -- Cache for clamped config values
-local cachedClampedConfig = nil
 local lastScreenW, lastScreenH = 0, 0
 
--- Clamp config values only when screen size changes
+-- Clamp config values - now with reduced caching for better live updates
 local function GetClampedConfig(cfg, screenW, screenH)
-    -- Always recalculate clamped config if cachedClampedConfig is nil
+    -- Always recalculate clamped config if cachedClampedConfig is nil (invalidated by MarkHudDirty)
+    -- or if screen size changed
     if cachedClampedConfig and lastScreenW == screenW and lastScreenH == screenH then
         return cachedClampedConfig
     end
@@ -1174,10 +1189,11 @@ function ExtraHUD:PostRender()
     -- Handle auto-resize if enabled (must be called before getting configs)
     HandleAutoResize(cfg, screenW, screenH)
 
-    -- Get clamped config (cached when screen size doesn't change) for layout/scaling
-    local clampedCfg = GetClampedConfig(cfg, screenW, screenH)
-    -- Always use live config for boundary/minimap positions
-    local liveCfg = cfg
+    -- Always get fresh config for real-time updates - reduce caching for better responsiveness
+    local freshCfg = getConfig()
+    local clampedCfg = GetClampedConfig(freshCfg, screenW, screenH)
+    -- Always use fresh config for boundary/minimap positions
+    local liveCfg = freshCfg
 
     -- Set minimap avoidance area to match MiniMapAPI or vanilla minimap estimate
     local minimapRect = GetMinimapRect(screenW, screenH)
