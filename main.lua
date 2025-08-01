@@ -138,6 +138,7 @@ local defaultConfig = {
     alwaysShowOverlayInMCM = false,
     hideHudOnPause = true,
     showCharHeadIcons = true, -- new default
+    itemLayoutMode = "4_across", -- Item layout: "4_across" or "2x2_grid"
     comboScale = 0.9, -- J&E Scale adjuster (default: 1.0)
     comboChunkDividerYOffset = 0, -- J&E chunk character divider offset (default: 0)
 }
@@ -655,23 +656,75 @@ local function GetMenuAnm2Sprite(animation, frame)
     return sprite
 end
 
--- Optimized column calculation
-local function getPlayerColumns(itemCount, isJacobEsauCombo)
+-- Optimized column calculation with layout mode support
+local function getPlayerColumns(itemCount, isJacobEsauCombo, layoutMode)
+    layoutMode = layoutMode or "4_across" -- Default to current behavior
+    
+    -- This function determines columns for items within each player's chunk
+    -- Layout mode doesn't affect this - it affects player chunk arrangement
     local maxCols = 4
     local itemsPerCol = isJacobEsauCombo and 4 or 8
     local cols = math.ceil(itemCount / itemsPerCol)
     return math.max(1, math.min(cols, maxCols))
 end
 
+-- Calculate player chunk arrangement based on layout mode
+local function calculatePlayerChunkLayout(playerCount, layoutMode)
+    layoutMode = layoutMode or "4_across"
+    
+    if layoutMode == "2x2_grid" then
+        -- Arrange player chunks in 2x2 grid format
+        if playerCount <= 1 then
+            return 1, 1 -- 1 column, 1 row
+        elseif playerCount <= 2 then
+            return 2, 1 -- 2 columns, 1 row
+        elseif playerCount <= 4 then
+            return 2, 2 -- 2 columns, 2 rows
+        else
+            -- For more than 4 players, extend vertically
+            local rows = math.ceil(playerCount / 2)
+            return 2, rows
+        end
+    else
+        -- Original "4_across" layout - all players in one row
+        return playerCount, 1
+    end
+end
+
 -- Calculate and cache layout (only when dirty)
 local function UpdateLayout(playerIconData, cfg, screenW, screenH)
     if cachedLayout.valid then return cachedLayout end
     
-    -- Calculate columns and max rows needed
+    -- Calculate player chunk arrangement
+    local actualPlayerCount = 0
+    local i = 1
+    while i <= #playerIconData do
+        local player = Isaac.GetPlayer(i-1)
+        local playerType = player and player:GetPlayerType() or 0
+        local isJacobEsauCombo = false
+        if i < #playerIconData and playerType == PlayerType.PLAYER_JACOB then
+            local esauPlayer = Isaac.GetPlayer(i)
+            local esauType = esauPlayer and esauPlayer:GetPlayerType() or 0
+            if esauType == PlayerType.PLAYER_ESAU then
+                isJacobEsauCombo = true
+            end
+        end
+        actualPlayerCount = actualPlayerCount + 1
+        if isJacobEsauCombo then
+            i = i + 2
+        else
+            i = i + 1
+        end
+    end
+    
+    local chunkCols, chunkRows = calculatePlayerChunkLayout(actualPlayerCount, cfg.itemLayoutMode)
+    
+    -- Calculate columns and dimensions for each player block
     local maxRows = 1
     local playerColumns = {}
     local blockWidths = {}
-    local i = 1
+    local blockHeights = {}
+    i = 1
     while i <= #playerIconData do
         local items = playerIconData[i]
         local itemCount = #items
@@ -691,41 +744,80 @@ local function UpdateLayout(playerIconData, cfg, screenW, screenH)
         playerColumns[i] = cols
         local rows = math.ceil(itemCount / cols)
         maxRows = math.max(maxRows, rows)
+        
+        local blockW = (ICON_SIZE * cols * cfg.scale) + ((cols - 1) * cfg.xSpacing * cfg.scale)
+        blockWidths[i] = blockW
+        
+        -- Calculate block height (including head icons if enabled)
+        local blockH = rows * (ICON_SIZE + cfg.ySpacing) * cfg.scale - cfg.ySpacing * cfg.scale
+        if cfg.showCharHeadIcons then
+            blockH = blockH + ICON_SIZE * cfg.scale + 16 * cfg.scale -- head icon + gap
+        end
+        blockHeights[i] = blockH
+        
         if isJacobEsauCombo then
-            blockWidths[i] = (ICON_SIZE * cols * (cfg.scale * (cfg.comboScale or 1.0))) + ((cols - 1) * cfg.xSpacing * (cfg.scale * (cfg.comboScale or 1.0)))
             i = i + 2
         else
-            blockWidths[i] = (ICON_SIZE * cols * cfg.scale) + ((cols - 1) * cfg.xSpacing * cfg.scale)
             i = i + 1
         end
     end
-    -- Calculate totalWidth, skipping Esau when paired
-    local totalWidth = 0
-    local blockCount = 0
-    i = 1
-    while i <= #playerIconData do
-        local player = Isaac.GetPlayer(i-1)
-        local playerType = player and player:GetPlayerType() or 0
-        local isJacobEsauCombo = false
-        if i < #playerIconData and playerType == PlayerType.PLAYER_JACOB then
-            local esauPlayer = Isaac.GetPlayer(i)
-            local esauType = esauPlayer and esauPlayer:GetPlayerType() or 0
-            if esauType == PlayerType.PLAYER_ESAU then
-                isJacobEsauCombo = true
+    
+    -- Calculate dimensions based on chunk arrangement
+    local maxChunkWidth = 0
+    local totalChunkHeight = 0
+    
+    -- Find the maximum width needed per row
+    local chunkIndex = 1
+    for row = 1, chunkRows do
+        local rowWidth = 0
+        local rowHeight = 0
+        for col = 1, chunkCols do
+            if chunkIndex <= actualPlayerCount then
+                -- Find the corresponding playerIconData index
+                local playerDataIndex = 1
+                local currentChunk = 1
+                i = 1
+                while i <= #playerIconData and currentChunk < chunkIndex do
+                    local player = Isaac.GetPlayer(i-1)
+                    local playerType = player and player:GetPlayerType() or 0
+                    local isJacobEsauCombo = false
+                    if i < #playerIconData and playerType == PlayerType.PLAYER_JACOB then
+                        local esauPlayer = Isaac.GetPlayer(i)
+                        local esauType = esauPlayer and esauPlayer:GetPlayerType() or 0
+                        if esauType == PlayerType.PLAYER_ESAU then
+                            isJacobEsauCombo = true
+                        end
+                    end
+                    currentChunk = currentChunk + 1
+                    if isJacobEsauCombo then
+                        i = i + 2
+                    else
+                        i = i + 1
+                    end
+                    playerDataIndex = i
+                end
+                
+                if playerDataIndex <= #playerIconData then
+                    rowWidth = rowWidth + (blockWidths[playerDataIndex] or 0)
+                    if col < chunkCols and chunkIndex < actualPlayerCount then
+                        rowWidth = rowWidth + INTER_PLAYER_SPACING * cfg.scale
+                    end
+                    rowHeight = math.max(rowHeight, blockHeights[playerDataIndex] or 0)
+                end
+                chunkIndex = chunkIndex + 1
             end
         end
-        totalWidth = totalWidth + (blockWidths[i] or 0)
-        blockCount = blockCount + 1
-        if isJacobEsauCombo then
-            i = i + 2
-        else
-            i = i + 1
+        maxChunkWidth = math.max(maxChunkWidth, rowWidth)
+        totalChunkHeight = totalChunkHeight + rowHeight
+        if row < chunkRows then
+            totalChunkHeight = totalChunkHeight + INTER_PLAYER_SPACING * cfg.scale
         end
     end
-    totalWidth = totalWidth + (blockCount - 1) * INTER_PLAYER_SPACING * cfg.scale
-    local maxHeight = maxRows * (ICON_SIZE + cfg.ySpacing) - cfg.ySpacing
+    
+    local totalWidth = maxChunkWidth
+    local totalHeight = totalChunkHeight
     local scale = cfg.scale
-    local totalHeight = maxHeight * scale
+    
     -- Calculate start position
     local startX, startY
     if cfg.hudMode then
@@ -735,9 +827,13 @@ local function UpdateLayout(playerIconData, cfg, screenW, screenH)
         startX = cfg.boundaryX + cfg.boundaryW - totalWidth + cfg.xOffset
         startY = cfg.boundaryY + ((cfg.boundaryH - totalHeight) / 2) + cfg.yOffset
     end
+    
     -- Cache the results
     cachedLayout.playerColumns = playerColumns
     cachedLayout.blockWidths = blockWidths
+    cachedLayout.blockHeights = blockHeights
+    cachedLayout.chunkCols = chunkCols
+    cachedLayout.chunkRows = chunkRows
     cachedLayout.totalWidth = totalWidth
     cachedLayout.totalHeight = totalHeight
     cachedLayout.maxRows = maxRows
@@ -785,6 +881,7 @@ local function GetClampedConfig(cfg, screenW, screenH)
     clamped.ySpacing = clamped.ySpacing or 0
     clamped.dividerOffset = clamped.dividerOffset or 0
     clamped.dividerYOffset = clamped.dividerYOffset or 0
+    clamped.itemLayoutMode = clamped.itemLayoutMode or "4_across"
     
     cachedClampedConfig = clamped
     lastScreenW, lastScreenH = screenW, screenH
@@ -984,103 +1081,173 @@ function ExtraHUD:PostRender()
     startX = math.max(boundaryX, math.min(startX, boundaryX + boundaryW - layout.totalWidth))
     startY = math.max(boundaryY, math.min(startY, boundaryY + boundaryH - layout.totalHeight))
 
-    -- Draw icons + dividers using cached layout
-    local curX = startX
-    local i = 1
-    while i <= #playerIconData do
-        local items = playerIconData[i]
-        local cols = layout.playerColumns[i]
-        local blockW = layout.blockWidths[i]
-        if type(cols) ~= "number" or cols < 1 or type(blockW) ~= "number" or blockW < 1 then
-            i = i + 1
+    -- Draw icons + dividers using 2D grid layout
+    -- Calculate actual player count (accounting for Jacob+Esau combos)
+    local actualPlayerCount = 0
+    local tempI = 1
+    while tempI <= #playerIconData do
+        local player = Isaac.GetPlayer(tempI-1)
+        local playerType = player and player:GetPlayerType() or 0
+        local isJacobEsauCombo = false
+        if tempI < #playerIconData and playerType == PlayerType.PLAYER_JACOB then
+            local esauPlayer = Isaac.GetPlayer(tempI)
+            local esauType = esauPlayer and esauPlayer:GetPlayerType() or 0
+            if esauType == PlayerType.PLAYER_ESAU then
+                isJacobEsauCombo = true
+            end
+        end
+        actualPlayerCount = actualPlayerCount + 1
+        if isJacobEsauCombo then
+            tempI = tempI + 2
         else
-            local player = Isaac.GetPlayer(i-1)
-            local playerType = player and player:GetPlayerType() or 0
-            -- Detect Jacob+Esau combo block
-            local isJacobCombo = (playerType == PlayerType.PLAYER_JACOB)
-            local isTaintedJacob = (playerType == PlayerType.PLAYER_JACOB_B)
-            if isJacobCombo and i < #playerIconData then
-                local esauPlayer = Isaac.GetPlayer(i)
-                local esauType = esauPlayer and esauPlayer:GetPlayerType() or 0
-                if esauType == PlayerType.PLAYER_ESAU then
-                    -- Combo block: Jacob on top, Esau below
-                    local comboScale = clampedCfg.comboScale or 1.0
-                    local blockHeight = ICON_SIZE * 2 * layout.scale * comboScale + (clampedCfg.ySpacing or 0) * layout.scale * comboScale + 32 * layout.scale * comboScale
-                    -- Jacob head
-                    local jacobHeadY = startY + ((clampedCfg.headIconYOffset or 0) * layout.scale * comboScale)
-                    if clampedCfg.showCharHeadIcons then
-                        local jacobHead = Sprite()
-                        jacobHead:Load("gfx/ui/coopextrahud/coop menu.anm2", true)
-                        jacobHead:SetFrame("Main", ExtraHUD.PlayerTypeToHeadFrame[PlayerType.PLAYER_JACOB])
-                        jacobHead.Scale = Vector(layout.scale * comboScale, layout.scale * comboScale)
-                        jacobHead.Color = Color(1,1,1,clampedCfg.opacity)
-                        local headX = curX + (blockW / 2) - (ICON_SIZE * layout.scale * comboScale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale * comboScale)
-                        jacobHead:Render(Vector(headX, jacobHeadY), Vector.Zero, Vector.Zero)
+            tempI = tempI + 1
+        end
+    end
+    
+    local chunkIndex = 1
+    local currentRowY = startY
+    
+    for row = 1, layout.chunkRows do
+        local chunkX = startX
+        local rowMaxHeight = 0
+        
+        for col = 1, layout.chunkCols do
+            if chunkIndex > #playerIconData then break end
+            
+            -- Find the corresponding playerIconData index for this chunk
+            local playerDataIndex = 1
+            local currentChunk = 1
+            local i = 1
+            while i <= #playerIconData and currentChunk < chunkIndex do
+                local player = Isaac.GetPlayer(i-1)
+                local playerType = player and player:GetPlayerType() or 0
+                local isJacobEsauCombo = false
+                if i < #playerIconData and playerType == PlayerType.PLAYER_JACOB then
+                    local esauPlayer = Isaac.GetPlayer(i)
+                    local esauType = esauPlayer and esauPlayer:GetPlayerType() or 0
+                    if esauType == PlayerType.PLAYER_ESAU then
+                        isJacobEsauCombo = true
                     end
-                    -- Jacob's items
-                    local jacobItems = items
-                    local esauItems = playerIconData[i+1]
-                    local maxJacob = math.min(#jacobItems, 16)
-                    local maxEsau = math.min(#esauItems, 16)
-                    local jacobItemsStartY = jacobHeadY + ICON_SIZE * layout.scale * comboScale + (clampedCfg.ySpacing or 0) * layout.scale * comboScale + (clampedCfg.comboHeadToItemsGap or 8) * layout.scale * comboScale
-                    for idx = 1, maxJacob do
-                        local row = math.floor((idx - 1) / cols)
-                        local col = (idx - 1) % cols
-                        local x = curX + col * (ICON_SIZE + clampedCfg.xSpacing) * layout.scale * comboScale
-                        local y = jacobItemsStartY + row * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale * comboScale
-                        RenderItemIcon(jacobItems[idx], x, y, layout.scale * comboScale, clampedCfg.opacity)
-                    end
-                    -- Small horizontal divider between Jacob and Esau
-                    -- Use preloaded 1x1 DividerSprite and scale for visibility
-                    local jacobItemsEndY = jacobItemsStartY + (math.ceil(maxJacob / cols)) * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale * comboScale
-                    local dividerY = jacobItemsEndY + (clampedCfg.comboChunkGap or 8) * layout.scale * comboScale
-                    local dividerYOffset = (clampedCfg.comboDividerYOffset or 0) * layout.scale * comboScale
-                    local dividerXOffset = (clampedCfg.comboDividerXOffset or 0) * layout.scale * comboScale
-                    local dividerW = blockW - 8 * layout.scale * comboScale
-                    -- Both offsets applied together for clarity
-                    DividerSprite.Scale = Vector(dividerW, 1)
-                    DividerSprite.Color = Color(1, 1, 1, clampedCfg.opacity)
-                    DividerSprite:Render(Vector(curX + 4 * layout.scale * comboScale + dividerXOffset, dividerY + dividerYOffset), Vector.Zero, Vector.Zero)
-                    -- Esau head and items always positioned relative to unmodified dividerY
-                    local esauHeadY = dividerY + (clampedCfg.comboHeadToItemsGap or 8) * layout.scale * comboScale
-                    if clampedCfg.showCharHeadIcons then
-                        local esauHead = Sprite()
-                        esauHead:Load("gfx/ui/coopextrahud/esau_head.anm2", true)
-                        esauHead:SetFrame("Esau", 0)
-                        esauHead.Scale = Vector(layout.scale * comboScale, layout.scale * comboScale)
-                        esauHead.Color = Color(1,1,1,clampedCfg.opacity)
-                        local headX = curX + (blockW / 2) - (ICON_SIZE * layout.scale * comboScale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale * comboScale)
-                        esauHead:Render(Vector(headX, esauHeadY), Vector.Zero, Vector.Zero)
-                    end
-                    -- Esau's items
-                    local esauItemsStartY = esauHeadY + ICON_SIZE * layout.scale * comboScale + (clampedCfg.ySpacing or 0) * layout.scale * comboScale + (clampedCfg.comboHeadToItemsGap or 8) * layout.scale * comboScale
-                    for idx = 1, maxEsau do
-                        local row = math.floor((idx - 1) / cols)
-                        local col = (idx - 1) % cols
-                        local x = curX + col * (ICON_SIZE + clampedCfg.xSpacing) * layout.scale * comboScale
-                        local y = esauItemsStartY + row * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale * comboScale
-                        RenderItemIcon(esauItems[idx], x, y, layout.scale * comboScale, clampedCfg.opacity)
-                    end
-                    -- Divider logic unchanged
-                    if i+1 < #playerIconData then
-                        local thisBlockW = layout.blockWidths[i]
-                        local nextBlockW = layout.blockWidths[i+2]
-                        local chunkDividerYOffset = (clampedCfg.comboChunkDividerYOffset or 0) * layout.scale * comboScale
-                        local dividerX = curX + thisBlockW + (INTER_PLAYER_SPACING * layout.scale * comboScale) / 2 + ((-16 + (clampedCfg.dividerOffset or 0)) * layout.scale * comboScale)
-                        local dividerY = startY + ((-32 + (clampedCfg.dividerYOffset or 0)) * layout.scale * comboScale) + chunkDividerYOffset
-                        local dividerHeight = layout.totalHeight * comboScale
-                        local heightScale = math.max(1, math.floor(dividerHeight + 0.5))
-                        DividerSprite.Scale = Vector(1, heightScale)
-                        DividerSprite.Color = Color(1, 1, 1, clampedCfg.opacity)
-                        DividerSprite:Render(Vector(dividerX, dividerY), Vector.Zero, Vector.Zero)
-                    end
-                    curX = curX + blockW + INTER_PLAYER_SPACING * layout.scale
+                end
+                currentChunk = currentChunk + 1
+                if isJacobEsauCombo then
                     i = i + 2
+                else
+                    i = i + 1
+                end
+                playerDataIndex = i
+            end
+            
+            if playerDataIndex > #playerIconData then break end
+            
+            local items = playerIconData[playerDataIndex]
+            local cols = layout.playerColumns[playerDataIndex]
+            local blockW = layout.blockWidths[playerDataIndex]
+            local blockH = layout.blockHeights[playerDataIndex]
+            
+            if type(cols) ~= "number" or cols < 1 or type(blockW) ~= "number" or blockW < 1 then
+                chunkIndex = chunkIndex + 1
+            else
+                local player = Isaac.GetPlayer(playerDataIndex-1)
+                local playerType = player and player:GetPlayerType() or 0
+                -- Detect Jacob+Esau combo block
+                local isJacobCombo = (playerType == PlayerType.PLAYER_JACOB)
+                local isTaintedJacob = (playerType == PlayerType.PLAYER_JACOB_B)
+                if isJacobCombo and playerDataIndex < #playerIconData then
+                    local esauPlayer = Isaac.GetPlayer(playerDataIndex)
+                    local esauType = esauPlayer and esauPlayer:GetPlayerType() or 0
+                    if esauType == PlayerType.PLAYER_ESAU then
+                        -- Combo block: Jacob on top, Esau below
+                        local jacobItems = items
+                        local esauItems = playerIconData[playerDataIndex+1]
+                        local maxJacob = math.min(#jacobItems, 16)
+                        local maxEsau = math.min(#esauItems, 16)
+                        -- Jacob head and items Y positioning
+                        local jacobHeadY = currentRowY + ((clampedCfg.headIconYOffset or 0) * layout.scale)
+                        local jacobItemsStartY
+                        if clampedCfg.showCharHeadIcons then
+                            local jacobHead = Sprite()
+                            jacobHead:Load("gfx/ui/coopextrahud/coop menu.anm2", true)
+                            jacobHead:SetFrame("Main", ExtraHUD.PlayerTypeToHeadFrame[PlayerType.PLAYER_JACOB])
+                            jacobHead.Scale = Vector(layout.scale, layout.scale)
+                            jacobHead.Color = Color(1,1,1,clampedCfg.opacity)
+                            local headX = chunkX + (blockW / 2) - (ICON_SIZE * layout.scale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale)
+                            jacobHead:Render(Vector(headX, jacobHeadY), Vector.Zero, Vector.Zero)
+                            jacobItemsStartY = jacobHeadY + ICON_SIZE * layout.scale + (clampedCfg.ySpacing or 0) * layout.scale + (clampedCfg.comboHeadToItemsGap or 8) * layout.scale
+                        else
+                            jacobItemsStartY = jacobHeadY -- No head icon, items start at block top
+                        end
+                        for idx = 1, maxJacob do
+                            local itemRow = math.floor((idx - 1) / cols)
+                            local itemCol = (idx - 1) % cols
+                            local x = chunkX + itemCol * (ICON_SIZE + clampedCfg.xSpacing) * layout.scale
+                            local y = jacobItemsStartY + itemRow * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
+                            RenderItemIcon(jacobItems[idx], x, y, layout.scale, clampedCfg.opacity)
+                        end
+                        -- Small horizontal divider between Jacob and Esau
+                        local jacobItemsEndY = jacobItemsStartY + (math.ceil(maxJacob / cols)) * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
+                        local dividerY = jacobItemsEndY + (clampedCfg.comboChunkGap or 8) * layout.scale
+                        local dividerYOffset = (clampedCfg.comboDividerYOffset or 0) * layout.scale
+                        local dividerXOffset = (clampedCfg.comboDividerXOffset or 0) * layout.scale
+                        local dividerW = blockW - 8 * layout.scale
+                        DividerSprite.Scale = Vector(dividerW, 1)
+                        DividerSprite.Color = Color(1, 1, 1, clampedCfg.opacity)
+                        DividerSprite:Render(Vector(chunkX + 4 * layout.scale + dividerXOffset, dividerY + dividerYOffset), Vector.Zero, Vector.Zero)
+                        -- Esau head and items Y positioning
+                        local esauHeadY = dividerY + (clampedCfg.comboHeadToItemsGap or 8) * layout.scale
+                        local esauItemsStartY
+                        if clampedCfg.showCharHeadIcons then
+                            local esauHead = Sprite()
+                            esauHead:Load("gfx/ui/coopextrahud/esau_head.anm2", true)
+                            esauHead:SetFrame("Esau", 0)
+                            esauHead.Scale = Vector(layout.scale, layout.scale)
+                            esauHead.Color = Color(1,1,1,clampedCfg.opacity)
+                            local headX = chunkX + (blockW / 2) - (ICON_SIZE * layout.scale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale)
+                            esauHead:Render(Vector(headX, esauHeadY), Vector.Zero, Vector.Zero)
+                            esauItemsStartY = esauHeadY + ICON_SIZE * layout.scale + (clampedCfg.ySpacing or 0) * layout.scale + (clampedCfg.comboHeadToItemsGap or 8) * layout.scale
+                        else
+                            esauItemsStartY = esauHeadY -- No head icon, items start at divider
+                        end
+                        for idx = 1, maxEsau do
+                            local itemRow = math.floor((idx - 1) / cols)
+                            local itemCol = (idx - 1) % cols
+                            local x = chunkX + itemCol * (ICON_SIZE + clampedCfg.xSpacing) * layout.scale
+                            local y = esauItemsStartY + itemRow * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
+                            RenderItemIcon(esauItems[idx], x, y, layout.scale, clampedCfg.opacity)
+                        end
+                        rowMaxHeight = math.max(rowMaxHeight, blockH)
+                    else
+                        -- Normal block rendering (not Jacob+Esau combo)
+                        local rows = math.ceil(#items / cols)
+                        local maxItems = math.min(#items, 32)
+                        local itemsStartY = currentRowY
+                        if clampedCfg.showCharHeadIcons then
+                            local headSprite = Sprite()
+                            headSprite:Load("gfx/ui/coopextrahud/coop menu.anm2", true)
+                            local frame = ExtraHUD.PlayerTypeToHeadFrame[playerType]
+                            headSprite:SetFrame("Main", frame)
+                            headSprite.Scale = Vector(layout.scale, layout.scale)
+                            headSprite.Color = Color(1,1,1,clampedCfg.opacity)
+                            local headX = chunkX + (blockW / 2) - (ICON_SIZE * layout.scale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale)
+                            local headY = currentRowY + ((clampedCfg.headIconYOffset or 0) * layout.scale)
+                            headSprite:Render(Vector(headX, headY), Vector.Zero, Vector.Zero)
+                            local extraGap = 16 * layout.scale
+                            itemsStartY = headY + ICON_SIZE * layout.scale + (clampedCfg.ySpacing or 0) * layout.scale + extraGap
+                        end
+                        for idx = 1, maxItems do
+                            local itemRow = math.floor((idx - 1) / cols)
+                            local itemCol = (idx - 1) % cols
+                            local x = chunkX + itemCol * (ICON_SIZE + clampedCfg.xSpacing) * layout.scale
+                            local y = itemsStartY + itemRow * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
+                            RenderItemIcon(items[idx], x, y, layout.scale, clampedCfg.opacity)
+                        end
+                        rowMaxHeight = math.max(rowMaxHeight, blockH)
+                    end
                 else
                     -- Normal block rendering (not Jacob+Esau combo)
                     local rows = math.ceil(#items / cols)
                     local maxItems = math.min(#items, 32)
-                    local itemsStartY = startY
+                    local itemsStartY = currentRowY
                     if clampedCfg.showCharHeadIcons then
                         local headSprite = Sprite()
                         headSprite:Load("gfx/ui/coopextrahud/coop menu.anm2", true)
@@ -1088,73 +1255,39 @@ function ExtraHUD:PostRender()
                         headSprite:SetFrame("Main", frame)
                         headSprite.Scale = Vector(layout.scale, layout.scale)
                         headSprite.Color = Color(1,1,1,clampedCfg.opacity)
-                        local headX = curX + (blockW / 2) - (ICON_SIZE * layout.scale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale)
-                        local headY = startY + ((clampedCfg.headIconYOffset or 0) * layout.scale)
+                        local headX = chunkX + (blockW / 2) - (ICON_SIZE * layout.scale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale)
+                        local headY = currentRowY + ((clampedCfg.headIconYOffset or 0) * layout.scale)
                         headSprite:Render(Vector(headX, headY), Vector.Zero, Vector.Zero)
                         local extraGap = 16 * layout.scale
                         itemsStartY = headY + ICON_SIZE * layout.scale + (clampedCfg.ySpacing or 0) * layout.scale + extraGap
                     end
                     for idx = 1, maxItems do
-                        local row = math.floor((idx - 1) / cols)
-                        local col = (idx - 1) % cols
-                        local x = curX + col * (ICON_SIZE + clampedCfg.xSpacing) * layout.scale
-                        local y = itemsStartY + row * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
+                        local itemRow = math.floor((idx - 1) / cols)
+                        local itemCol = (idx - 1) % cols
+                        local x = chunkX + itemCol * (ICON_SIZE + clampedCfg.xSpacing) * layout.scale
+                        local y = itemsStartY + itemRow * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
                         RenderItemIcon(items[idx], x, y, layout.scale, clampedCfg.opacity)
                     end
-                    if i < #playerIconData then
-                        local thisBlockW = layout.blockWidths[i]
-                        local nextBlockW = layout.blockWidths[i+1]
-                        local dividerX = curX + thisBlockW + (INTER_PLAYER_SPACING * layout.scale) / 2 + ((-16 + (clampedCfg.dividerOffset or 0)) * layout.scale)
-                        local dividerY = itemsStartY + ((-32 + (clampedCfg.dividerYOffset or 0)) * layout.scale)
-                        local dividerHeight = layout.totalHeight
-                        local heightScale = math.max(1, math.floor(dividerHeight + 0.5))
-                        DividerSprite.Scale = Vector(1, heightScale)
-                        DividerSprite.Color = Color(1, 1, 1, clampedCfg.opacity)
-                        DividerSprite:Render(Vector(dividerX, dividerY), Vector.Zero, Vector.Zero)
-                    end
-                    curX = curX + blockW + INTER_PLAYER_SPACING * layout.scale
-                    i = i + 1
+                    rowMaxHeight = math.max(rowMaxHeight, blockH)
                 end
-            else
-                -- Normal block rendering (not Jacob+Esau combo)
-                local rows = math.ceil(#items / cols)
-                local maxItems = math.min(#items, 32)
-                local itemsStartY = startY
-                if clampedCfg.showCharHeadIcons then
-                    local headSprite = Sprite()
-                    headSprite:Load("gfx/ui/coopextrahud/coop menu.anm2", true)
-                    local frame = ExtraHUD.PlayerTypeToHeadFrame[playerType]
-                    headSprite:SetFrame("Main", frame)
-                    headSprite.Scale = Vector(layout.scale, layout.scale)
-                    headSprite.Color = Color(1,1,1,clampedCfg.opacity)
-                    local headX = curX + (blockW / 2) - (ICON_SIZE * layout.scale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale)
-                    local headY = startY + ((clampedCfg.headIconYOffset or 0) * layout.scale)
-                    headSprite:Render(Vector(headX, headY), Vector.Zero, Vector.Zero)
-                    local extraGap = 16 * layout.scale
-                    itemsStartY = headY + ICON_SIZE * layout.scale + (clampedCfg.ySpacing or 0) * layout.scale + extraGap
-                end
-                for idx = 1, maxItems do
-                    local row = math.floor((idx - 1) / cols)
-                    local col = (idx - 1) % cols
-                    local x = curX + col * (ICON_SIZE + clampedCfg.xSpacing) * layout.scale
-                    local y = itemsStartY + row * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
-                    RenderItemIcon(items[idx], x, y, layout.scale, clampedCfg.opacity)
-                end
-                if i < #playerIconData then
-                    local thisBlockW = layout.blockWidths[i]
-                    local nextBlockW = layout.blockWidths[i+1]
-                    local dividerX = curX + thisBlockW + (INTER_PLAYER_SPACING * layout.scale) / 2 + ((-16 + (clampedCfg.dividerOffset or 0)) * layout.scale)
-                    local dividerY = itemsStartY + ((-32 + (clampedCfg.dividerYOffset or 0)) * layout.scale)
-                    local dividerHeight = layout.totalHeight
+                
+                -- Add vertical dividers between chunks in the same row (but not after the last chunk)
+                if col < layout.chunkCols and chunkIndex < actualPlayerCount then
+                    local dividerX = chunkX + blockW + (INTER_PLAYER_SPACING * layout.scale) / 2 + ((-16 + (clampedCfg.dividerOffset or 0)) * layout.scale)
+                    local dividerY = currentRowY + ((-32 + (clampedCfg.dividerYOffset or 0)) * layout.scale)
+                    local dividerHeight = rowMaxHeight
                     local heightScale = math.max(1, math.floor(dividerHeight + 0.5))
                     DividerSprite.Scale = Vector(1, heightScale)
                     DividerSprite.Color = Color(1, 1, 1, clampedCfg.opacity)
                     DividerSprite:Render(Vector(dividerX, dividerY), Vector.Zero, Vector.Zero)
                 end
-                curX = curX + blockW + INTER_PLAYER_SPACING * layout.scale
-                i = i + 1
+                
+                chunkX = chunkX + blockW + INTER_PLAYER_SPACING * layout.scale
+                chunkIndex = chunkIndex + 1
             end
         end
+        
+        currentRowY = currentRowY + rowMaxHeight + INTER_PLAYER_SPACING * layout.scale
     end
     -- Debug overlay: color-coded sprite-based overlays
     if getConfig().debugOverlay then

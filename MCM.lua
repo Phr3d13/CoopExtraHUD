@@ -118,6 +118,23 @@ function M.RegisterConfigMenu()
         end,
     })
 
+    -- Item Layout Mode
+    ModConfigMenu.AddSetting(MOD, "Presets", {
+        Type = ModConfigMenu.OptionType.BOOLEAN,
+        CurrentSetting = function() return config.itemLayoutMode == "2x2_grid" end,
+        Display = function()
+            return "Item Layout: " .. (config.itemLayoutMode == "2x2_grid" and "2x2 Grid" or "4 Across")
+        end,
+        Info = "Choose item arrangement style. '4 Across' displays items in horizontal rows (classic). '2x2 Grid' arranges items in 2x2 blocks for a more compact layout.",
+        OnChange = function(v)
+            config.itemLayoutMode = v and "2x2_grid" or "4_across"
+            UpdateCurrentPreset()
+            SaveConfig()
+            -- Invalidate caches so HUD updates immediately
+            if ExtraHUD and ExtraHUD.OnOverlayAdjusterMoved then ExtraHUD.OnOverlayAdjusterMoved() end
+        end,
+    })
+
 
     -- Head Category
     ModConfigMenu.AddSpace(MOD, "Head")
