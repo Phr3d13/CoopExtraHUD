@@ -21,6 +21,10 @@ local playerTrackedCollectibles = {}
 local playerPickupOrder = {}
 local itemSpriteCache = {}
 local spriteUsageTracker = {}
+
+-- Character head sprite cache to prevent memory leaks from creating sprites every frame
+local characterHeadSpriteCache = {}
+
 local debugLogs = {}
 local lastAutoResizeScreenW, lastAutoResizeScreenH = 0, 0
 local overlayToggleDebounce = 0
@@ -289,26 +293,88 @@ local function GetItemSprite(itemId, gfxFile)
     return itemSpriteCache[itemId] or nil
 end
 
+-- Isaac best practice: Cache character head sprites to prevent memory leaks
+local function GetCharacterHeadSprite(playerType, isEsau)
+    local cacheKey = isEsau and "esau" or tostring(playerType)
+    
+    if not characterHeadSpriteCache[cacheKey] then
+        local sprite = Sprite()
+        
+        if isEsau then
+            -- Special handling for Esau
+            sprite:Load("gfx/ui/coopextrahud/esau_head.anm2", true)
+            sprite:SetFrame("Esau", 0)
+        else
+            -- Regular character heads
+            sprite:Load("gfx/ui/coopextrahud/coop menu.anm2", true)
+            local frame = ExtraHUD.PlayerTypeToHeadFrame[playerType] or 0
+            sprite:SetFrame("Main", frame)
+        end
+        
+        sprite:LoadGraphics()
+        characterHeadSpriteCache[cacheKey] = sprite
+    end
+    
+    return characterHeadSpriteCache[cacheKey]
+end
+
 -- Clean up unused sprites to prevent memory leaks (updated for modded items)
 local function CleanupUnusedSprites()
-    -- Only run if spriteUsageTracker is large (avoid frequent cleanup)
+    -- Initialize constants if not already done
+    InitializeConstants()
+    
+    -- Only run cleanup if we have a significant number of cached sprites
+    local cacheSize = 0
+    for _ in pairs(itemSpriteCache) do
+        cacheSize = cacheSize + 1
+    end
+    
+    -- Don't cleanup if cache is small (avoid frequent cleanup overhead)
+    if cacheSize < 50 then
+        return
+    end
+    
+    -- Build set of currently owned items across all players
     local ownedItems = {}
     local game = Game()
+    if not game then return end
+    
     for i = 0, game:GetNumPlayers() - 1 do
         local player = Isaac.GetPlayer(i)
-        -- Isaac best practice: Use proper constants for item scanning
-        for id = MIN_COLLECTIBLE_ID, VANILLA_ITEM_LIMIT do
-            if player:HasCollectible(id) and IsValidItem(id) then
-                ownedItems[id] = true
+        if player then
+            -- Check vanilla items (using safe range)
+            local maxItem = VANILLA_ITEM_LIMIT or DEFAULT_ITEM_LIMIT
+            for id = MIN_COLLECTIBLE_ID, maxItem do
+                if player:HasCollectible(id) then
+                    ownedItems[id] = true
+                end
+            end
+            
+            -- Also check modded items by scanning the cache itself
+            -- This ensures we don't accidentally remove sprites for modded items
+            for itemId, _ in pairs(itemSpriteCache) do
+                if itemId > maxItem and player:HasCollectible(itemId) then
+                    ownedItems[itemId] = true
+                end
             end
         end
     end
+    
     -- Remove sprites for items no longer owned by any player
+    local removedCount = 0
     for itemId, _ in pairs(itemSpriteCache) do
         if not ownedItems[itemId] then
             itemSpriteCache[itemId] = nil
-            spriteUsageTracker[itemId] = nil
+            if spriteUsageTracker then
+                spriteUsageTracker[itemId] = nil
+            end
+            removedCount = removedCount + 1
         end
+    end
+    
+    -- Log cleanup if significant number of sprites were removed
+    if removedCount > 10 then
+        AddDebugLog("Cleaned up " .. removedCount .. " unused item sprites")
     end
 end
 
@@ -359,6 +425,8 @@ local function UpdatePlayerIconData()
     local game = Game()
     local totalPlayers = game:GetNumPlayers()
     cachedPlayerIconData = {}
+    -- Debug logging to verify player count
+    AddDebugLog("UpdatePlayerIconData: totalPlayers = " .. totalPlayers)
     -- Only clear sprite usage tracker if player count or pickup order changed
     local shouldCleanup = false
     if not spriteUsageTracker or #spriteUsageTracker > 2 * totalPlayers then
@@ -390,6 +458,8 @@ local function UpdatePlayerIconData()
                 table.insert(cachedPlayerIconData[i + 1], id)
             end
         end
+        -- Debug logging to verify each player's items
+        AddDebugLog("Player " .. i .. " has " .. #cachedPlayerIconData[i + 1] .. " items")
     end
     cachedPlayerCount = totalPlayers
     hudDirty = false
@@ -429,77 +499,120 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
     -- Clear sprite cache on new game to prevent memory buildup
     itemSpriteCache = {}
     spriteUsageTracker = {}
+    characterHeadSpriteCache = {}
     MarkHudDirty()
 end, CallbackPriority and CallbackPriority.LATE or nil)
-local lastPlayerCount = 0
-ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
-    local curCount = Game():GetNumPlayers()
-    if curCount > lastPlayerCount then
-        for i = lastPlayerCount, curCount - 1 do
-            local player = Isaac.GetPlayer(i)
-            playerTrackedCollectibles[i] = {}
-            for id = 1, MAX_ITEM_ID do
-                if player:HasCollectible(id) and IsValidItem(id) then
-                    playerTrackedCollectibles[i][id] = true
-                end
-            end
-        end
-        MarkHudDirty()
-    end
-    lastPlayerCount = curCount
-end, CallbackPriority and CallbackPriority.LATE or nil)
 
--- Maintain true pickup order for each player (with modded item support)
-local function UpdatePickupOrderForAllPlayers()
+-- Forward declarations for pickup order functions
+local UpdatePickupOrderForPlayer, UpdatePickupOrderForAllPlayers
+
+-- Maintain true pickup order for each player (optimized - only update when items change)
+local function UpdatePickupOrderForPlayer(playerIndex)
     local game = Game()
-    for i = 0, game:GetNumPlayers() - 1 do
-        local player = Isaac.GetPlayer(i)
-        playerPickupOrder[i] = playerPickupOrder[i] or {}
-        local owned = {}
-        for id = 1, MAX_ITEM_ID do
-            if player:HasCollectible(id) and IsValidItem(id) then
-                owned[id] = true
+    if not game then return end
+    
+    local player = Isaac.GetPlayer(playerIndex)
+    if not player then return end
+    
+    playerPickupOrder[playerIndex] = playerPickupOrder[playerIndex] or {}
+    
+    -- Build current owned items set (limit to reasonable range for performance)
+    local owned = {}
+    local maxRange = math.min(MAX_ITEM_ID, 500) -- Limit range for performance
+    
+    for id = 1, maxRange do
+        if player:HasCollectible(id) and IsValidItem(id) then
+            owned[id] = true
+        end
+    end
+    
+    -- Remove any collectibles from order that are no longer owned
+    local j = 1
+    while j <= #playerPickupOrder[playerIndex] do
+        local itemId = playerPickupOrder[playerIndex][j]
+        if not owned[itemId] then
+            table.remove(playerPickupOrder[playerIndex], j)
+        else
+            j = j + 1
+        end
+    end
+    
+    -- Add any new items not in the pickup order yet
+    for id, _ in pairs(owned) do
+        local found = false
+        for _, itemId in ipairs(playerPickupOrder[playerIndex]) do
+            if itemId == id then
+                found = true
+                break
             end
         end
-        -- Remove any collectibles from order that are no longer owned
-        local j = 1
-        while j <= #playerPickupOrder[i] do
-            if not owned[playerPickupOrder[i][j]] then
-                table.remove(playerPickupOrder[i], j)
-            else
-                j = j + 1
-            end
+        if not found then
+            table.insert(playerPickupOrder[playerIndex], id)
         end
     end
 end
 
--- On player effect update, update pickup order and mark HUD dirty
+-- Legacy wrapper - now only updates when actually needed
+local function UpdatePickupOrderForAllPlayers()
+    local game = Game()
+    if not game then return end
+    
+    for i = 0, game:GetNumPlayers() - 1 do
+        UpdatePickupOrderForPlayer(i)
+    end
+end
+
+local lastPlayerCount = 0
+
+-- Combined MC_POST_UPDATE: handle both player count changes and debounced pickup updates
+ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
+    local curCount = Game():GetNumPlayers()
+    
+    -- Handle new players joining (optimized)
+    if curCount > lastPlayerCount then
+        for i = lastPlayerCount, curCount - 1 do
+            playerTrackedCollectibles[i] = {}
+            playerPickupOrder[i] = {}
+            -- Initialize pickup order for new players - use UpdatePickupOrderForPlayer instead of manual scan
+            UpdatePickupOrderForPlayer(i)
+        end
+        MarkHudDirty()
+        lastPlayerCount = curCount
+    end
+    
+    -- Handle debounced pickup order updates
+    if needsPickupOrderUpdate and pickupOrderUpdateDebounce <= 0 then
+        UpdatePickupOrderForAllPlayers()
+        MarkHudDirty()
+        needsPickupOrderUpdate = false
+        pickupOrderUpdateDebounce = 10
+    elseif pickupOrderUpdateDebounce > 0 then
+        pickupOrderUpdateDebounce = pickupOrderUpdateDebounce - 1
+    end
+end, CallbackPriority and CallbackPriority.LATE or nil)
+
+-- Optimized: Only update pickup order when items actually change, not every frame
+-- Use a debounced approach to avoid excessive updates
+local pickupOrderUpdateDebounce = 0
+local needsPickupOrderUpdate = false
+
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_PEFFECT_UPDATE, function(_, player)
-    UpdatePickupOrderForAllPlayers()
-    MarkHudDirty()
+    -- Only mark for update, don't do expensive scanning every frame
+    if pickupOrderUpdateDebounce <= 0 then
+        needsPickupOrderUpdate = true
+        pickupOrderUpdateDebounce = 10 -- Update at most every 10 frames
+    else
+        pickupOrderUpdateDebounce = pickupOrderUpdateDebounce - 1
+    end
 end)
 
--- On pickup, just mark HUD dirty (no need to update playerTrackedCollectibles/playerPickupOrder here)
+-- Simplified pickup detection - just mark for update, don't scan everything
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_PICKUP_UPDATE, function(_, pickup)
     if pickup.Variant == PickupVariant.PICKUP_COLLECTIBLE then
         if pickup:GetSprite():IsFinished("Collect") or pickup:IsDead() then
-            for i = 0, Game():GetNumPlayers() - 1 do
-                local player = Isaac.GetPlayer(i)
-                for id = 1, MAX_ITEM_ID do
-                    if player:HasCollectible(id) and IsValidItem(id) then
-                        local alreadyTracked = false
-                        if playerPickupOrder[i] then
-                            for _, v in ipairs(playerPickupOrder[i]) do
-                                if v == id then alreadyTracked = true break end
-                            end
-                        end
-                        if not alreadyTracked then
-                            playerPickupOrder[i] = playerPickupOrder[i] or {}
-                            table.insert(playerPickupOrder[i], id)
-                        end
-                    end
-                end
-            end
+            -- Just mark that we need to update pickup order, don't do expensive scanning here
+            needsPickupOrderUpdate = true
+            pickupOrderUpdateDebounce = 0 -- Update immediately on pickup
             MarkHudDirty()
         end
     end
@@ -749,11 +862,38 @@ local function UpdateLayout(playerIconData, cfg, screenW, screenH)
         blockWidths[i] = blockW
         
         -- Calculate block height (including head icons if enabled)
-        local blockH = rows * (ICON_SIZE + cfg.ySpacing) * cfg.scale - cfg.ySpacing * cfg.scale
-        if cfg.showCharHeadIcons then
-            blockH = blockH + ICON_SIZE * cfg.scale + 16 * cfg.scale -- head icon + gap
+        if isJacobEsauCombo then
+            -- Special height calculation for Jacob & Esau combo blocks
+            local jacobItems = playerIconData[i] or {}
+            local esauItems = playerIconData[i+1] or {}
+            local jacobRows = math.ceil(#jacobItems / cols)
+            local esauRows = math.ceil(#esauItems / cols)
+            
+            local blockH = 0
+            -- Jacob head icon (if enabled)
+            if cfg.showCharHeadIcons then
+                blockH = blockH + ICON_SIZE * cfg.scale + 16 * cfg.scale -- head icon + gap
+            end
+            -- Jacob items height
+            blockH = blockH + jacobRows * (ICON_SIZE + cfg.ySpacing) * cfg.scale - cfg.ySpacing * cfg.scale
+            -- Divider gap between Jacob and Esau
+            blockH = blockH + (cfg.comboChunkGap or 8) * cfg.scale + 2 * cfg.scale -- divider height
+            -- Esau head icon (if enabled)  
+            if cfg.showCharHeadIcons then
+                blockH = blockH + ICON_SIZE * cfg.scale + 16 * cfg.scale -- head icon + gap
+            end
+            -- Esau items height
+            blockH = blockH + esauRows * (ICON_SIZE + cfg.ySpacing) * cfg.scale - cfg.ySpacing * cfg.scale
+            
+            blockHeights[i] = blockH
+        else
+            -- Normal player block height calculation
+            local blockH = rows * (ICON_SIZE + cfg.ySpacing) * cfg.scale - cfg.ySpacing * cfg.scale
+            if cfg.showCharHeadIcons then
+                blockH = blockH + ICON_SIZE * cfg.scale + 16 * cfg.scale -- head icon + gap
+            end
+            blockHeights[i] = blockH
         end
-        blockHeights[i] = blockH
         
         if isJacobEsauCombo then
             i = i + 2
@@ -1084,13 +1224,13 @@ function ExtraHUD:PostRender()
     -- Draw icons + dividers using 2D grid layout
     -- Calculate actual player count (accounting for Jacob+Esau combos)
     local actualPlayerCount = 0
-    local tempI = 1
-    while tempI <= #playerIconData do
-        local player = Isaac.GetPlayer(tempI-1)
+    local playerIndex = 0
+    while playerIndex < totalPlayers do
+        local player = Isaac.GetPlayer(playerIndex)
         local playerType = player and player:GetPlayerType() or 0
         local isJacobEsauCombo = false
-        if tempI < #playerIconData and playerType == PlayerType.PLAYER_JACOB then
-            local esauPlayer = Isaac.GetPlayer(tempI)
+        if playerIndex + 1 < totalPlayers and playerType == PlayerType.PLAYER_JACOB then
+            local esauPlayer = Isaac.GetPlayer(playerIndex + 1)
             local esauType = esauPlayer and esauPlayer:GetPlayerType() or 0
             if esauType == PlayerType.PLAYER_ESAU then
                 isJacobEsauCombo = true
@@ -1098,77 +1238,52 @@ function ExtraHUD:PostRender()
         end
         actualPlayerCount = actualPlayerCount + 1
         if isJacobEsauCombo then
-            tempI = tempI + 2
+            playerIndex = playerIndex + 2
         else
-            tempI = tempI + 1
+            playerIndex = playerIndex + 1
         end
     end
     
     local chunkIndex = 1
     local currentRowY = startY
+    local currentPlayerIndex = 0 -- Track actual player index (0-based)
     
     for row = 1, layout.chunkRows do
         local chunkX = startX
         local rowMaxHeight = 0
         
         for col = 1, layout.chunkCols do
-            if chunkIndex > #playerIconData then break end
+            if chunkIndex > actualPlayerCount or currentPlayerIndex >= totalPlayers then break end
             
-            -- Find the corresponding playerIconData index for this chunk
-            local playerDataIndex = 1
-            local currentChunk = 1
-            local i = 1
-            while i <= #playerIconData and currentChunk < chunkIndex do
-                local player = Isaac.GetPlayer(i-1)
-                local playerType = player and player:GetPlayerType() or 0
-                local isJacobEsauCombo = false
-                if i < #playerIconData and playerType == PlayerType.PLAYER_JACOB then
-                    local esauPlayer = Isaac.GetPlayer(i)
-                    local esauType = esauPlayer and esauPlayer:GetPlayerType() or 0
-                    if esauType == PlayerType.PLAYER_ESAU then
-                        isJacobEsauCombo = true
-                    end
-                end
-                currentChunk = currentChunk + 1
-                if isJacobEsauCombo then
-                    i = i + 2
-                else
-                    i = i + 1
-                end
-                playerDataIndex = i
-            end
-            
-            if playerDataIndex > #playerIconData then break end
-            
-            local items = playerIconData[playerDataIndex]
-            local cols = layout.playerColumns[playerDataIndex]
-            local blockW = layout.blockWidths[playerDataIndex]
-            local blockH = layout.blockHeights[playerDataIndex]
+            -- Get the current player and items
+            local items = playerIconData[currentPlayerIndex + 1] -- playerIconData is 1-indexed
+            local cols = layout.playerColumns[currentPlayerIndex + 1]
+            local blockW = layout.blockWidths[currentPlayerIndex + 1]
+            local blockH = layout.blockHeights[currentPlayerIndex + 1]
             
             if type(cols) ~= "number" or cols < 1 or type(blockW) ~= "number" or blockW < 1 then
                 chunkIndex = chunkIndex + 1
+                currentPlayerIndex = currentPlayerIndex + 1
             else
-                local player = Isaac.GetPlayer(playerDataIndex-1)
+                local player = Isaac.GetPlayer(currentPlayerIndex)
                 local playerType = player and player:GetPlayerType() or 0
                 -- Detect Jacob+Esau combo block
                 local isJacobCombo = (playerType == PlayerType.PLAYER_JACOB)
                 local isTaintedJacob = (playerType == PlayerType.PLAYER_JACOB_B)
-                if isJacobCombo and playerDataIndex < #playerIconData then
-                    local esauPlayer = Isaac.GetPlayer(playerDataIndex)
+                if isJacobCombo and currentPlayerIndex + 1 < totalPlayers then
+                    local esauPlayer = Isaac.GetPlayer(currentPlayerIndex + 1)
                     local esauType = esauPlayer and esauPlayer:GetPlayerType() or 0
                     if esauType == PlayerType.PLAYER_ESAU then
                         -- Combo block: Jacob on top, Esau below
                         local jacobItems = items
-                        local esauItems = playerIconData[playerDataIndex+1]
+                        local esauItems = playerIconData[currentPlayerIndex + 2] -- +2 because playerIconData is 1-indexed
                         local maxJacob = math.min(#jacobItems, 16)
                         local maxEsau = math.min(#esauItems, 16)
                         -- Jacob head and items Y positioning
                         local jacobHeadY = currentRowY + ((clampedCfg.headIconYOffset or 0) * layout.scale)
                         local jacobItemsStartY
                         if clampedCfg.showCharHeadIcons then
-                            local jacobHead = Sprite()
-                            jacobHead:Load("gfx/ui/coopextrahud/coop menu.anm2", true)
-                            jacobHead:SetFrame("Main", ExtraHUD.PlayerTypeToHeadFrame[PlayerType.PLAYER_JACOB])
+                            local jacobHead = GetCharacterHeadSprite(PlayerType.PLAYER_JACOB, false)
                             jacobHead.Scale = Vector(layout.scale, layout.scale)
                             jacobHead.Color = Color(1,1,1,clampedCfg.opacity)
                             local headX = chunkX + (blockW / 2) - (ICON_SIZE * layout.scale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale)
@@ -1197,11 +1312,9 @@ function ExtraHUD:PostRender()
                         local esauHeadY = dividerY + (clampedCfg.comboHeadToItemsGap or 8) * layout.scale
                         local esauItemsStartY
                         if clampedCfg.showCharHeadIcons then
-                            local esauHead = Sprite()
-                            esauHead:Load("gfx/ui/coopextrahud/esau_head.anm2", true)
-                            esauHead:SetFrame("Esau", 0)
+                            local esauHead = GetCharacterHeadSprite(PlayerType.PLAYER_ESAU, true)
                             esauHead.Scale = Vector(layout.scale, layout.scale)
-                            esauHead.Color = Color(1,1,1,clampedCfg.opacity)
+                            esauHead.Color = Color(1, 1, 1, clampedCfg.opacity)
                             local headX = chunkX + (blockW / 2) - (ICON_SIZE * layout.scale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale)
                             esauHead:Render(Vector(headX, esauHeadY), Vector.Zero, Vector.Zero)
                             esauItemsStartY = esauHeadY + ICON_SIZE * layout.scale + (clampedCfg.ySpacing or 0) * layout.scale + (clampedCfg.comboHeadToItemsGap or 8) * layout.scale
@@ -1216,16 +1329,15 @@ function ExtraHUD:PostRender()
                             RenderItemIcon(esauItems[idx], x, y, layout.scale, clampedCfg.opacity)
                         end
                         rowMaxHeight = math.max(rowMaxHeight, blockH)
+                        -- Advance player index by 2 for Jacob+Esau combo
+                        currentPlayerIndex = currentPlayerIndex + 2
                     else
                         -- Normal block rendering (not Jacob+Esau combo)
                         local rows = math.ceil(#items / cols)
                         local maxItems = math.min(#items, 32)
                         local itemsStartY = currentRowY
                         if clampedCfg.showCharHeadIcons then
-                            local headSprite = Sprite()
-                            headSprite:Load("gfx/ui/coopextrahud/coop menu.anm2", true)
-                            local frame = ExtraHUD.PlayerTypeToHeadFrame[playerType]
-                            headSprite:SetFrame("Main", frame)
+                            local headSprite = GetCharacterHeadSprite(playerType, false)
                             headSprite.Scale = Vector(layout.scale, layout.scale)
                             headSprite.Color = Color(1,1,1,clampedCfg.opacity)
                             local headX = chunkX + (blockW / 2) - (ICON_SIZE * layout.scale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale)
@@ -1242,6 +1354,8 @@ function ExtraHUD:PostRender()
                             RenderItemIcon(items[idx], x, y, layout.scale, clampedCfg.opacity)
                         end
                         rowMaxHeight = math.max(rowMaxHeight, blockH)
+                        -- Advance player index by 1 for normal Jacob (not combo)
+                        currentPlayerIndex = currentPlayerIndex + 1
                     end
                 else
                     -- Normal block rendering (not Jacob+Esau combo)
@@ -1249,10 +1363,7 @@ function ExtraHUD:PostRender()
                     local maxItems = math.min(#items, 32)
                     local itemsStartY = currentRowY
                     if clampedCfg.showCharHeadIcons then
-                        local headSprite = Sprite()
-                        headSprite:Load("gfx/ui/coopextrahud/coop menu.anm2", true)
-                        local frame = ExtraHUD.PlayerTypeToHeadFrame[playerType]
-                        headSprite:SetFrame("Main", frame)
+                        local headSprite = GetCharacterHeadSprite(playerType, false)
                         headSprite.Scale = Vector(layout.scale, layout.scale)
                         headSprite.Color = Color(1,1,1,clampedCfg.opacity)
                         local headX = chunkX + (blockW / 2) - (ICON_SIZE * layout.scale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale)
@@ -1269,6 +1380,8 @@ function ExtraHUD:PostRender()
                         RenderItemIcon(items[idx], x, y, layout.scale, clampedCfg.opacity)
                     end
                     rowMaxHeight = math.max(rowMaxHeight, blockH)
+                    -- Advance player index by 1 for normal player
+                    currentPlayerIndex = currentPlayerIndex + 1
                 end
                 
                 -- Add vertical dividers between chunks in the same row (but not after the last chunk)

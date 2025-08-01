@@ -58,7 +58,7 @@ The HUD dynamically scales with the number of players and items, plus you can cu
 ---
 
 Perfect for streamers, couch co-op players, or anyone wanting clearer HUD info during hectic runs!</description>
-    <version>1.0.12</version>
+    <version>1.0.14</version>
     <visibility>Public</visibility>
     <tag id="Tweaks"/>
 </metadata>
