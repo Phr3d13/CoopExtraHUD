@@ -1,4 +1,4 @@
-local ModConfigMenu = _G.ModConfigMenu
+local ModConfigMenu = _G["ModConfigMenu"]
 -- MCM.lua: Mod Config Menu logic for CoopExtraHUD
 -- This file contains all MCM registration, option helpers, and overlay flag logic.
 --

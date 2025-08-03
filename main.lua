@@ -12,8 +12,6 @@ local ICON_SIZE = 32 -- Standard Isaac item icon size in pixels
 local INTER_PLAYER_SPACING = 16 -- Space between player HUD blocks in pixels
 
 local cachedLayout = { valid = false }
-local cachedClampedConfig = nil
-local lastScreenW, lastScreenH = 0, 0
 local hudDirty = true
 local cachedPlayerIconData = nil
 local cachedPlayerCount = 0
@@ -29,7 +27,6 @@ local lastAutoResizeScreenW, lastAutoResizeScreenH = 0, 0
 local overlayToggleDebounce = 0
 local currentManualOverlayType = ""
 local lastMCMState = false
-local mcmStateCheckCounter = 0
 local VANILLA_ITEM_LIMIT = nil
 local SaveConfig, LoadConfig, UpdateCurrentPreset
 local mcmTables = nil -- MCM integration variable
@@ -37,8 +34,6 @@ local mcmTables = nil -- MCM integration variable
 local function MarkHudDirty()
     hudDirty = true
     cachedLayout.valid = false
-    cachedClampedConfig = nil
-    lastScreenW, lastScreenH = 0, 0
 end
 
 local MCM
@@ -108,7 +103,8 @@ ExtraHUD.PlayerTypeToHeadFrame = {
 
 setmetatable(ExtraHUD.PlayerTypeToHeadFrame, {
     __index = function(t, k)
-        return (type(k) == "number" and k + 1) or 1
+        -- Use frame 0 as placeholder for modded characters (question mark head)
+        return (type(k) == "number" and 0) or 1
     end
 })
 
@@ -223,8 +219,6 @@ end
 local function SaveConfigLocal()
     if config then
         ExtraHUD:SaveData(SerializeAllConfigs())
-        -- Clear caches when config changes
-        cachedClampedConfig = nil
         MarkHudDirty()
     end
 end
@@ -267,9 +261,7 @@ UpdateCurrentPreset = UpdateCurrentPresetLocal
             getConfig = getConfig,
             MarkHudDirty = MarkHudDirty,
             OnOverlayAdjusterMoved = function()
-                cachedClampedConfig = nil
                 cachedLayout.valid = false
-                lastScreenW, lastScreenH = 0, 0
                 MarkHudDirty()
             end,
         })
@@ -294,9 +286,7 @@ UpdateCurrentPreset = UpdateCurrentPresetLocal
             ExtraHUD.OnOverlayAdjusterMoved = mcmTables.OnOverlayAdjusterMoved
         else
             ExtraHUD.OnOverlayAdjusterMoved = function()
-                cachedClampedConfig = nil
                 cachedLayout.valid = false
-                lastScreenW, lastScreenH = 0, 0
                 MarkHudDirty()
             end
         end
@@ -333,9 +323,7 @@ UpdateCurrentPreset = UpdateCurrentPresetLocal
         end
     else
         ExtraHUD.OnOverlayAdjusterMoved = function()
-            cachedClampedConfig = nil
             cachedLayout.valid = false
-            lastScreenW, lastScreenH = 0, 0
             MarkHudDirty()
         end
     end
@@ -410,7 +398,7 @@ local function GetCharacterHeadSprite(playerType, isEsau)
         else
             -- Regular character heads
             sprite:Load("gfx/ui/coopextrahud/coop menu.anm2", true)
-            local frame = ExtraHUD.PlayerTypeToHeadFrame[playerType] or 0
+            local frame = ExtraHUD.PlayerTypeToHeadFrame[playerType] or 1
             sprite:SetFrame("Main", frame)
         end
         
@@ -504,20 +492,14 @@ local cachedLayout = {
 local function MarkHudDirty()
     hudDirty = true
     cachedLayout.valid = false
-    -- Also clear config cache to pick up new values immediately
-    cachedClampedConfig = nil
-    -- Force screen size cache to refresh so config changes are picked up
-    lastScreenW, lastScreenH = 0, 0
 end
 
 -- Expose MarkHudDirty for MCM to call when config changes
 ExtraHUD.MarkHudDirty = MarkHudDirty
 
 function ExtraHUD.OnOverlayAdjusterMoved()
-    -- Invalidate all caches and force HUD/layout update
-    cachedClampedConfig = nil
+    -- Invalidate caches and force HUD/layout update
     cachedLayout.valid = false
-    lastScreenW, lastScreenH = 0, 0
     MarkHudDirty()
 end
 
@@ -633,17 +615,19 @@ local function UpdatePickupOrderForPlayer(playerIndex)
         end
     end
     
-    -- Add any new items not in the pickup order yet
-    for id, _ in pairs(owned) do
-        local found = false
-        for _, itemId in ipairs(playerPickupOrder[playerIndex]) do
-            if itemId == id then
-                found = true
-                break
+    -- Add any new items not in the pickup order yet (scan in numerical order for consistency)
+    for id = 1, maxRange do
+        if owned[id] then
+            local found = false
+            for _, itemId in ipairs(playerPickupOrder[playerIndex]) do
+                if itemId == id then
+                    found = true
+                    break
+                end
             end
-        end
-        if not found then
-            table.insert(playerPickupOrder[playerIndex], id)
+            if not found then
+                table.insert(playerPickupOrder[playerIndex], id)
+            end
         end
     end
 end
@@ -679,8 +663,21 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
         for i = lastPlayerCount, curCount - 1 do
             playerTrackedCollectibles[i] = {}
             playerPickupOrder[i] = {}
-            -- Initialize pickup order for new players - use UpdatePickupOrderForPlayer instead of manual scan
-            UpdatePickupOrderForPlayer(i)
+            -- Initialize pickup order for new players - scan items in deterministic order like Player 1
+            local player = Isaac.GetPlayer(i)
+            if player then
+                local startingItems = {}
+                for id = 1, MAX_ITEM_ID do
+                    if player:HasCollectible(id) and IsValidItem(id) then
+                        playerTrackedCollectibles[i][id] = true
+                        table.insert(startingItems, id)
+                    end
+                end
+                -- Initialize pickup order with starting items (in numerical order for consistency)
+                for _, id in ipairs(startingItems) do
+                    table.insert(playerPickupOrder[i], id)
+                end
+            end
         end
         MarkHudDirty()
         lastPlayerCount = curCount
@@ -729,6 +726,43 @@ local function RenderItemIcon(itemId, x, y, scale, opa)
     spr.Scale = Vector(scale, scale)
     spr.Color = Color(1, 1, 1, opa)
     spr:Render(Vector(x, y), Vector.Zero, Vector.Zero)
+end
+
+-- Common function to render a player's items block
+local function RenderPlayerBlock(playerType, items, chunkX, currentRowY, cols, blockW, layout, cfg)
+    local maxItems = math.min(#items, 32)
+    local itemsStartY = currentRowY
+    
+    -- Render head icon if enabled
+    if cfg.showCharHeadIcons then
+        local isEsau = (playerType == PlayerType.PLAYER_ESAU)
+        local headSprite = GetCharacterHeadSprite(playerType, isEsau)
+        if headSprite then
+            headSprite.Scale = Vector(layout.scale, layout.scale)
+            headSprite.Color = Color(1, 1, 1, cfg.opacity)
+            local headX = chunkX + (blockW / 2) - (ICON_SIZE * layout.scale / 2) + ((cfg.headIconXOffset or 0) * layout.scale)
+            local headY = currentRowY + ((cfg.headIconYOffset or 0) * layout.scale)
+            headSprite:Render(Vector(headX, headY), Vector.Zero, Vector.Zero)
+            local extraGap = 16 * layout.scale
+            itemsStartY = headY + ICON_SIZE * layout.scale + (cfg.ySpacing or 0) * layout.scale + extraGap
+        end
+    end
+    
+    -- Render items in grid
+    for idx = 1, maxItems do
+        local itemId = items[idx]
+        if itemId then
+            local itemRow = math.floor((idx - 1) / cols)
+            local itemCol = (idx - 1) % cols
+            local x = chunkX + itemCol * (ICON_SIZE + cfg.xSpacing) * layout.scale
+            local y = itemsStartY + itemRow * (ICON_SIZE + cfg.ySpacing) * layout.scale
+            RenderItemIcon(itemId, x, y, layout.scale, cfg.opacity)
+        end
+    end
+    
+    -- Return the bottom Y position of this block
+    local itemRows = math.ceil(maxItems / cols)
+    return itemsStartY + itemRows * (ICON_SIZE + cfg.ySpacing) * layout.scale
 end
 
 -- MiniMapAPI integration: get minimap bounding box if available
@@ -786,7 +820,6 @@ ExtraHUD.MCMCompat_displayingTab = ""
 
 -- Cache MCM state to avoid checking every frame
 local lastMCMState = false
-local mcmStateCheckCounter = 0
 -- MCM integration variable (declared at module level above - don't redeclare here)
 -- Sprite-based overlay system (following MCM exact implementation)
 local function GetMenuAnm2Sprite(animation, frame)
@@ -1108,9 +1141,8 @@ local function HandleAutoResize(cfg, screenW, screenH)
         -- Save the updated config
         SaveConfig()
         
-        -- Force cache refresh
-        cachedClampedConfig = nil
-        lastScreenW, lastScreenH = 0, 0
+        -- Force layout refresh
+        MarkHudDirty()
         
         print("[CoopExtraHUD] Auto-adjusted HUD position for new screen size: " .. screenW .. "x" .. screenH)
     end
@@ -1189,22 +1221,17 @@ function ExtraHUD:PostRender()
     -- Handle auto-resize if enabled (must be called before getting configs)
     HandleAutoResize(cfg, screenW, screenH)
 
-    -- Always get fresh config for real-time updates - reduce caching for better responsiveness
-    local freshCfg = getConfig()
-    local clampedCfg = GetClampedConfig(freshCfg, screenW, screenH)
-    -- Always use fresh config for boundary/minimap positions
-    local liveCfg = freshCfg
-
-    -- Set minimap avoidance area to match MiniMapAPI or vanilla minimap estimate
+    -- Get fresh config for better real-time responsiveness
+    local cfg = getConfig()
+    
+    -- Simple minimap detection - no complex caching
     local minimapRect = GetMinimapRect(screenW, screenH)
     if minimapRect then
-        if liveCfg.minimapX ~= minimapRect.x or liveCfg.minimapY ~= minimapRect.y or liveCfg.minimapW ~= minimapRect.w or liveCfg.minimapH ~= minimapRect.h then
-            liveCfg.minimapX = minimapRect.x
-            liveCfg.minimapY = minimapRect.y
-            liveCfg.minimapW = minimapRect.w
-            liveCfg.minimapH = minimapRect.h
-            -- Do not save config here, as this is a runtime-only adjustment
-        end
+        cfg.minimapX = minimapRect.x
+        cfg.minimapY = minimapRect.y
+        cfg.minimapW = minimapRect.w
+        cfg.minimapH = minimapRect.h
+        -- Runtime-only adjustment, don't save
     end
 
     -- Only update player icon data cache if dirty or player count changed
@@ -1216,19 +1243,19 @@ function ExtraHUD:PostRender()
     local playerIconData = cachedPlayerIconData
     if not playerIconData then return end
 
-    -- Get cached layout (only recalculates when dirty)
-    local layout = UpdateLayout(playerIconData, clampedCfg, screenW, screenH)
+    -- Get cached layout (only recalculates when dirty) - use simplified config
+    local layout = UpdateLayout(playerIconData, cfg, screenW, screenH)
 
-    -- Extract config values once (cached from liveCfg)
-    local boundaryX = tonumber(liveCfg.boundaryX) or 0
-    local boundaryY = tonumber(liveCfg.boundaryY) or 0
-    local boundaryW = tonumber(liveCfg.boundaryW) or 0
-    local boundaryH = tonumber(liveCfg.boundaryH) or 0
-    local minimapX = tonumber(liveCfg.minimapX) or 0
-    local minimapY = tonumber(liveCfg.minimapY) or 0
-    local minimapW = tonumber(liveCfg.minimapW) or 0
-    local minimapH = tonumber(liveCfg.minimapH) or 0
-    local minimapPadding = liveCfg.minimapPadding or 0
+    -- Extract config values once
+    local boundaryX = tonumber(cfg.boundaryX) or 0
+    local boundaryY = tonumber(cfg.boundaryY) or 0
+    local boundaryW = tonumber(cfg.boundaryW) or 0
+    local boundaryH = tonumber(cfg.boundaryH) or 0
+    local minimapX = tonumber(cfg.minimapX) or 0
+    local minimapY = tonumber(cfg.minimapY) or 0
+    local minimapW = tonumber(cfg.minimapW) or 0
+    local minimapH = tonumber(cfg.minimapH) or 0
+    local minimapPadding = cfg.minimapPadding or 0
 
     -- Apply minimap avoidance and boundary clamping to start position
     local startX, startY = layout.startX, layout.startY
@@ -1295,131 +1322,61 @@ function ExtraHUD:PostRender()
             else
                 local player = Isaac.GetPlayer(currentPlayerIndex)
                 local playerType = player and player:GetPlayerType() or 0
-                -- Detect Jacob+Esau combo block
-                local isJacobCombo = (playerType == PlayerType.PLAYER_JACOB)
-                local isTaintedJacob = (playerType == PlayerType.PLAYER_JACOB_B)
-                if isJacobCombo and currentPlayerIndex + 1 < totalPlayers then
+                
+                -- Check for Jacob+Esau combo
+                local isJacobCombo = (playerType == PlayerType.PLAYER_JACOB) and 
+                                     (currentPlayerIndex + 1 < totalPlayers)
+                
+                if isJacobCombo then
                     local esauPlayer = Isaac.GetPlayer(currentPlayerIndex + 1)
                     local esauType = esauPlayer and esauPlayer:GetPlayerType() or 0
+                    
                     if esauType == PlayerType.PLAYER_ESAU then
-                        -- Combo block: Jacob on top, Esau below
+                        -- Jacob+Esau combo rendering
                         local jacobItems = items
                         local esauItems = playerIconData[currentPlayerIndex + 2] -- +2 because playerIconData is 1-indexed
-                        local maxJacob = math.min(#jacobItems, 16)
-                        local maxEsau = math.min(#esauItems, 16)
-                        -- Jacob head and items Y positioning
-                        local jacobHeadY = currentRowY + ((clampedCfg.headIconYOffset or 0) * layout.scale)
-                        local jacobItemsStartY
-                        if clampedCfg.showCharHeadIcons then
-                            local jacobHead = GetCharacterHeadSprite(PlayerType.PLAYER_JACOB, false)
-                            jacobHead.Scale = Vector(layout.scale, layout.scale)
-                            jacobHead.Color = Color(1,1,1,clampedCfg.opacity)
-                            local headX = chunkX + (blockW / 2) - (ICON_SIZE * layout.scale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale)
-                            jacobHead:Render(Vector(headX, jacobHeadY), Vector.Zero, Vector.Zero)
-                            jacobItemsStartY = jacobHeadY + ICON_SIZE * layout.scale + (clampedCfg.ySpacing or 0) * layout.scale + (clampedCfg.comboHeadToItemsGap or 8) * layout.scale
-                        else
-                            jacobItemsStartY = jacobHeadY -- No head icon, items start at block top
-                        end
-                        for idx = 1, maxJacob do
-                            local itemRow = math.floor((idx - 1) / cols)
-                            local itemCol = (idx - 1) % cols
-                            local x = chunkX + itemCol * (ICON_SIZE + clampedCfg.xSpacing) * layout.scale
-                            local y = jacobItemsStartY + itemRow * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
-                            RenderItemIcon(jacobItems[idx], x, y, layout.scale, clampedCfg.opacity)
-                        end
-                        -- Small horizontal divider between Jacob and Esau
-                        local jacobItemsEndY = jacobItemsStartY + (math.ceil(maxJacob / cols)) * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
-                        local dividerY = jacobItemsEndY + (clampedCfg.comboChunkGap or 8) * layout.scale
-                        local dividerYOffset = (clampedCfg.comboDividerYOffset or 0) * layout.scale
-                        local dividerXOffset = (clampedCfg.comboDividerXOffset or 0) * layout.scale
+                        
+                        -- Render Jacob block
+                        local jacobEndY = RenderPlayerBlock(PlayerType.PLAYER_JACOB, jacobItems, 
+                                                          chunkX, currentRowY, cols, blockW, layout, cfg)
+                        
+                        -- Render horizontal divider
+                        local dividerY = jacobEndY + (cfg.comboChunkGap or 8) * layout.scale
+                        local dividerYOffset = (cfg.comboDividerYOffset or 0) * layout.scale
+                        local dividerXOffset = (cfg.comboDividerXOffset or 0) * layout.scale
                         local dividerW = blockW - 8 * layout.scale
                         DividerSprite.Scale = Vector(dividerW, 1)
-                        DividerSprite.Color = Color(1, 1, 1, clampedCfg.opacity)
+                        DividerSprite.Color = Color(1, 1, 1, cfg.opacity)
                         DividerSprite:Render(Vector(chunkX + 4 * layout.scale + dividerXOffset, dividerY + dividerYOffset), Vector.Zero, Vector.Zero)
-                        -- Esau head and items Y positioning
-                        local esauHeadY = dividerY + (clampedCfg.comboHeadToItemsGap or 8) * layout.scale
-                        local esauItemsStartY
-                        if clampedCfg.showCharHeadIcons then
-                            local esauHead = GetCharacterHeadSprite(PlayerType.PLAYER_ESAU, true)
-                            esauHead.Scale = Vector(layout.scale, layout.scale)
-                            esauHead.Color = Color(1, 1, 1, clampedCfg.opacity)
-                            local headX = chunkX + (blockW / 2) - (ICON_SIZE * layout.scale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale)
-                            esauHead:Render(Vector(headX, esauHeadY), Vector.Zero, Vector.Zero)
-                            esauItemsStartY = esauHeadY + ICON_SIZE * layout.scale + (clampedCfg.ySpacing or 0) * layout.scale + (clampedCfg.comboHeadToItemsGap or 8) * layout.scale
-                        else
-                            esauItemsStartY = esauHeadY -- No head icon, items start at divider
-                        end
-                        for idx = 1, maxEsau do
-                            local itemRow = math.floor((idx - 1) / cols)
-                            local itemCol = (idx - 1) % cols
-                            local x = chunkX + itemCol * (ICON_SIZE + clampedCfg.xSpacing) * layout.scale
-                            local y = esauItemsStartY + itemRow * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
-                            RenderItemIcon(esauItems[idx], x, y, layout.scale, clampedCfg.opacity)
-                        end
+                        
+                        -- Render Esau block
+                        local esauStartY = dividerY + (cfg.comboHeadToItemsGap or 8) * layout.scale
+                        RenderPlayerBlock(PlayerType.PLAYER_ESAU, esauItems, 
+                                        chunkX, esauStartY, cols, blockW, layout, cfg)
+                        
                         rowMaxHeight = math.max(rowMaxHeight, blockH)
-                        -- Advance player index by 2 for Jacob+Esau combo
                         currentPlayerIndex = currentPlayerIndex + 2
                     else
-                        -- Normal block rendering (not Jacob+Esau combo)
-                        local rows = math.ceil(#items / cols)
-                        local maxItems = math.min(#items, 32)
-                        local itemsStartY = currentRowY
-                        if clampedCfg.showCharHeadIcons then
-                            local headSprite = GetCharacterHeadSprite(playerType, false)
-                            headSprite.Scale = Vector(layout.scale, layout.scale)
-                            headSprite.Color = Color(1,1,1,clampedCfg.opacity)
-                            local headX = chunkX + (blockW / 2) - (ICON_SIZE * layout.scale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale)
-                            local headY = currentRowY + ((clampedCfg.headIconYOffset or 0) * layout.scale)
-                            headSprite:Render(Vector(headX, headY), Vector.Zero, Vector.Zero)
-                            local extraGap = 16 * layout.scale
-                            itemsStartY = headY + ICON_SIZE * layout.scale + (clampedCfg.ySpacing or 0) * layout.scale + extraGap
-                        end
-                        for idx = 1, maxItems do
-                            local itemRow = math.floor((idx - 1) / cols)
-                            local itemCol = (idx - 1) % cols
-                            local x = chunkX + itemCol * (ICON_SIZE + clampedCfg.xSpacing) * layout.scale
-                            local y = itemsStartY + itemRow * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
-                            RenderItemIcon(items[idx], x, y, layout.scale, clampedCfg.opacity)
-                        end
+                        -- Normal Jacob (without Esau)
+                        RenderPlayerBlock(playerType, items, chunkX, currentRowY, cols, blockW, layout, cfg)
                         rowMaxHeight = math.max(rowMaxHeight, blockH)
-                        -- Advance player index by 1 for normal Jacob (not combo)
                         currentPlayerIndex = currentPlayerIndex + 1
                     end
                 else
-                    -- Normal block rendering (not Jacob+Esau combo)
-                    local rows = math.ceil(#items / cols)
-                    local maxItems = math.min(#items, 32)
-                    local itemsStartY = currentRowY
-                    if clampedCfg.showCharHeadIcons then
-                        local headSprite = GetCharacterHeadSprite(playerType, false)
-                        headSprite.Scale = Vector(layout.scale, layout.scale)
-                        headSprite.Color = Color(1,1,1,clampedCfg.opacity)
-                        local headX = chunkX + (blockW / 2) - (ICON_SIZE * layout.scale / 2) + ((clampedCfg.headIconXOffset or 0) * layout.scale)
-                        local headY = currentRowY + ((clampedCfg.headIconYOffset or 0) * layout.scale)
-                        headSprite:Render(Vector(headX, headY), Vector.Zero, Vector.Zero)
-                        local extraGap = 16 * layout.scale
-                        itemsStartY = headY + ICON_SIZE * layout.scale + (clampedCfg.ySpacing or 0) * layout.scale + extraGap
-                    end
-                    for idx = 1, maxItems do
-                        local itemRow = math.floor((idx - 1) / cols)
-                        local itemCol = (idx - 1) % cols
-                        local x = chunkX + itemCol * (ICON_SIZE + clampedCfg.xSpacing) * layout.scale
-                        local y = itemsStartY + itemRow * (ICON_SIZE + clampedCfg.ySpacing) * layout.scale
-                        RenderItemIcon(items[idx], x, y, layout.scale, clampedCfg.opacity)
-                    end
+                    -- Normal player rendering
+                    RenderPlayerBlock(playerType, items, chunkX, currentRowY, cols, blockW, layout, cfg)
                     rowMaxHeight = math.max(rowMaxHeight, blockH)
-                    -- Advance player index by 1 for normal player
                     currentPlayerIndex = currentPlayerIndex + 1
                 end
                 
                 -- Add vertical dividers between chunks in the same row (but not after the last chunk)
                 if col < layout.chunkCols and chunkIndex < actualPlayerCount then
-                    local dividerX = chunkX + blockW + (INTER_PLAYER_SPACING * layout.scale) / 2 + ((-16 + (clampedCfg.dividerOffset or 0)) * layout.scale)
-                    local dividerY = currentRowY + ((-32 + (clampedCfg.dividerYOffset or 0)) * layout.scale)
+                    local dividerX = chunkX + blockW + (INTER_PLAYER_SPACING * layout.scale) / 2 + ((-16 + (cfg.dividerOffset or 0)) * layout.scale)
+                    local dividerY = currentRowY + ((-32 + (cfg.dividerYOffset or 0)) * layout.scale)
                     local dividerHeight = rowMaxHeight
                     local heightScale = math.max(1, math.floor(dividerHeight + 0.5))
                     DividerSprite.Scale = Vector(1, heightScale)
-                    DividerSprite.Color = Color(1, 1, 1, clampedCfg.opacity)
+                    DividerSprite.Color = Color(1, 1, 1, cfg.opacity)
                     DividerSprite:Render(Vector(dividerX, dividerY), Vector.Zero, Vector.Zero)
                 end
                 
@@ -1486,31 +1443,17 @@ function ExtraHUD:PostRender()
                 Isaac.RenderText("Actual HUD", startX+4, startY+4, 0, 1, 0, 1)
             end
         end
-        -- Ensure the cache reflects the current state
-        if cachedClampedConfig then
-            cachedClampedConfig.debugOverlay = true
-        end
-    else
-        -- Only force a HUD redraw if the debug overlay was previously on and is now off
-        if cachedClampedConfig and cachedClampedConfig.debugOverlay then
-            cachedClampedConfig.debugOverlay = false
-            MarkHudDirty()
-        end
     end
     
-    -- Optimized MCM overlay detection: only check every 5 frames to reduce overhead
-    mcmStateCheckCounter = mcmStateCheckCounter + 1
-    if mcmStateCheckCounter >= 5 then
-        mcmStateCheckCounter = 0
-        
-        -- Update MCM focus tracking for overlay detection
-        if mcmTables and mcmTables.UpdateMCMOverlayDisplay then
-            mcmTables.UpdateMCMOverlayDisplay()
-        end
-        
-        -- EID-style automatic overlay detection based on which MCM tab is being viewed
-        local mcm = _G['ModConfigMenu']
-        local mcmIsOpen = mcm and ((type(mcm.IsVisible) == "function" and mcm.IsVisible()) or (type(mcm.IsVisible) == "boolean" and mcm.IsVisible))
+    -- MCM overlay detection: check every frame for better responsiveness
+    -- Update MCM focus tracking for overlay detection
+    if mcmTables and mcmTables.UpdateMCMOverlayDisplay then
+        mcmTables.UpdateMCMOverlayDisplay()
+    end
+    
+    -- EID-style automatic overlay detection based on which MCM tab is being viewed
+    local mcm = _G['ModConfigMenu']
+    local mcmIsOpen = mcm and ((type(mcm.IsVisible) == "function" and mcm.IsVisible()) or (type(mcm.IsVisible) == "boolean" and mcm.IsVisible))
         
         -- Only update overlay state when MCM state changes
         if mcmIsOpen ~= lastMCMState then
@@ -1671,7 +1614,6 @@ function ExtraHUD:PostRender()
             Isaac.RenderText("HUD Position", actualHudX+4, actualHudY+4, 0, 1, 0, 1)
         end
     end
-end
 
 -- Also disable vanilla ExtraHUD on mod load (first load)
 DisableVanillaExtraHUD()
