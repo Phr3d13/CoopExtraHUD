@@ -353,10 +353,14 @@ local function IsValidItem(itemId)
     if not itemConfig then return false end
     
     local collectible = itemConfig:GetCollectible(itemId)
-    return collectible ~= nil and 
-           collectible.GfxFileName ~= nil and 
-           collectible.GfxFileName ~= "" and
-           collectible.GfxFileName ~= "gfx/items/collectibles/questionmark.png"
+    if not collectible then return false end
+    
+    -- Basic validation
+    local hasValidGfx = collectible.GfxFileName ~= nil and 
+                       collectible.GfxFileName ~= "" and
+                       collectible.GfxFileName ~= "gfx/items/collectibles/questionmark.png"
+    
+    return hasValidGfx
 end
 
 -- Sprite cache for item icons with cleanup tracking
@@ -391,6 +395,26 @@ local function GetCharacterHeadSprite(playerType, isEsau)
     if not characterHeadSpriteCache[cacheKey] then
         local sprite = Sprite()
         
+        -- Repentogon enhancement: Try to use modded character's official coop menu sprite
+        if REPENTOGON and EntityConfig and not isEsau then
+            local playerConfig = EntityConfig.GetPlayer(playerType)
+            if playerConfig then
+                local coopSprite = playerConfig:GetModdedCoopMenuSprite()
+                if coopSprite then
+                    -- Use the modded character's official coop menu sprite
+                    -- The sprite contains animations named after each character
+                    local characterName = playerConfig:GetName()
+                    if characterName and characterName ~= "" then
+                        coopSprite:Play(characterName, true)
+                        coopSprite:LoadGraphics()
+                        characterHeadSpriteCache[cacheKey] = coopSprite
+                        return coopSprite
+                    end
+                end
+            end
+        end
+        
+        -- Original fallback system (always works, with or without Repentogon)
         if isEsau then
             -- Special handling for Esau
             sprite:Load("gfx/ui/coopextrahud/esau_head.anm2", true)
@@ -398,7 +422,7 @@ local function GetCharacterHeadSprite(playerType, isEsau)
         else
             -- Regular character heads
             sprite:Load("gfx/ui/coopextrahud/coop menu.anm2", true)
-            local frame = ExtraHUD.PlayerTypeToHeadFrame[playerType] or 1
+            local frame = ExtraHUD.PlayerTypeToHeadFrame[playerType] or 0 -- Frame 0 for unknown characters
             sprite:SetFrame("Main", frame)
         end
         
@@ -793,6 +817,7 @@ end
 
 -- MiniMapAPI integration: get minimap bounding box if available, else estimate vanilla minimap
 local function GetMinimapRect(screenW, screenH)
+    -- MiniMapAPI detection first
     local mmapi = _G["MiniMapAPI"] or _G["MinimapAPI"] or _G["MiniMapAPICompat"]
     if mmapi and type(mmapi.GetScreenTopRight) == "function" and type(mmapi.GetScreenSize) == "function" then
         local topRight = mmapi.GetScreenTopRight()
@@ -807,7 +832,8 @@ local function GetMinimapRect(screenW, screenH)
             end
         end
     end
-    -- Fallback to vanilla minimap estimate
+    
+    -- Standard fallback to vanilla minimap estimate
     return GetVanillaMinimapRect(screenW, screenH)
 end
 
