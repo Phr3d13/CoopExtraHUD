@@ -401,14 +401,15 @@ local function GetCharacterHeadSprite(playerType, isEsau)
             if playerConfig then
                 local coopSprite = playerConfig:GetModdedCoopMenuSprite()
                 if coopSprite then
-                    -- Use the modded character's official coop menu sprite
-                    -- The sprite contains animations named after each character
+                    -- Create our own sprite instance to avoid modifying the shared mod sprite
                     local characterName = playerConfig:GetName()
                     if characterName and characterName ~= "" then
-                        coopSprite:Play(characterName, true)
-                        coopSprite:LoadGraphics()
-                        characterHeadSpriteCache[cacheKey] = coopSprite
-                        return coopSprite
+                        -- Load the same anm2 file as the modded sprite but in our own instance
+                        sprite:Load(coopSprite:GetFilename(), true)
+                        sprite:Play(characterName, true)
+                        sprite:LoadGraphics()
+                        characterHeadSpriteCache[cacheKey] = sprite
+                        return sprite
                     end
                 end
             end
