@@ -573,31 +573,49 @@ end
 
 -- Helper: record all current collectibles for all players (e.g. at game start or new player join)
 local function TrackAllCurrentCollectibles()
-    for i = 0, Game():GetNumPlayers() - 1 do
+    local game = Game()
+    local totalPlayers = game:GetNumPlayers()
+    
+    for i = 0, totalPlayers - 1 do
         local player = Isaac.GetPlayer(i)
-        playerTrackedCollectibles[i] = {}
-        -- Only scan up to MAX_ITEM_ID, skip high IDs unless needed
-        local startingItems = {}
-        for id = 1, MAX_ITEM_ID do
-            if player:HasCollectible(id) and IsValidItem(id) then
-                playerTrackedCollectibles[i][id] = true
-                table.insert(startingItems, id)
+        if player then
+            -- Ensure tracking tables exist
+            if not playerTrackedCollectibles[i] then
+                playerTrackedCollectibles[i] = {}
+            else
+                -- Clear existing tracking for fresh start
+                playerTrackedCollectibles[i] = {}
             end
-        end
-        -- If pickup order is empty, initialize it with starting items (in order)
-        if not playerPickupOrder[i] or #playerPickupOrder[i] == 0 then
+            
+            -- Only scan up to MAX_ITEM_ID, skip high IDs unless needed
+            local startingItems = {}
+            for id = 1, MAX_ITEM_ID do
+                if player:HasCollectible(id) and IsValidItem(id) then
+                    playerTrackedCollectibles[i][id] = true
+                    table.insert(startingItems, id)
+                end
+            end
+            
+            -- Always reinitialize pickup order for fresh start
             playerPickupOrder[i] = {}
             for _, id in ipairs(startingItems) do
                 table.insert(playerPickupOrder[i], id)
             end
         end
     end
+    
+    -- Update cached player count to match current state
+    cachedPlayerCount = totalPlayers
 end
 
 -- Isaac best practice: Enhanced game start handling
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
     -- Disable vanilla ExtraHUD if configured
     DisableVanillaExtraHUD()
+    
+    -- Reset player count tracking to ensure proper detection of all players
+    lastPlayerCount = 0
+    
     TrackAllCurrentCollectibles()
     -- Clear sprite cache on new game to prevent memory buildup
     itemSpriteCache = {}
@@ -684,24 +702,29 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
         lastPlayerCount = 0
     end
     
-    -- Handle new players joining (optimized)
-    if curCount > lastPlayerCount then
-        for i = lastPlayerCount, curCount - 1 do
-            playerTrackedCollectibles[i] = {}
-            playerPickupOrder[i] = {}
-            -- Initialize pickup order for new players - scan items in deterministic order like Player 1
-            local player = Isaac.GetPlayer(i)
-            if player then
-                local startingItems = {}
-                for id = 1, MAX_ITEM_ID do
-                    if player:HasCollectible(id) and IsValidItem(id) then
-                        playerTrackedCollectibles[i][id] = true
-                        table.insert(startingItems, id)
+    -- Handle new players joining (optimized) - also handle case where player count decreases then increases
+    if curCount > lastPlayerCount or curCount ~= cachedPlayerCount then
+        -- Ensure we track all current players, not just new ones
+        for i = 0, curCount - 1 do
+            if not playerTrackedCollectibles[i] then
+                playerTrackedCollectibles[i] = {}
+            end
+            if not playerPickupOrder[i] then
+                playerPickupOrder[i] = {}
+                -- Initialize pickup order for new players - scan items in deterministic order
+                local player = Isaac.GetPlayer(i)
+                if player then
+                    local startingItems = {}
+                    for id = 1, MAX_ITEM_ID do
+                        if player:HasCollectible(id) and IsValidItem(id) then
+                            playerTrackedCollectibles[i][id] = true
+                            table.insert(startingItems, id)
+                        end
                     end
-                end
-                -- Initialize pickup order with starting items (in numerical order for consistency)
-                for _, id in ipairs(startingItems) do
-                    table.insert(playerPickupOrder[i], id)
+                    -- Initialize pickup order with starting items (in numerical order for consistency)
+                    for _, id in ipairs(startingItems) do
+                        table.insert(playerPickupOrder[i], id)
+                    end
                 end
             end
         end
