@@ -670,9 +670,10 @@ end
 local lastPlayerCount = 0
 
 -- Optimized: Only update pickup order when items actually change, not every frame
--- Use a debounced approach to avoid excessive updates
+-- Use frame-based timing with Repentogon for better performance
 local pickupOrderUpdateDebounce = 0
 local needsPickupOrderUpdate = false
+local lastUpdateFrame = 0
 
 -- Combined MC_POST_UPDATE: handle both player count changes and debounced pickup updates
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
@@ -708,24 +709,56 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
         lastPlayerCount = curCount
     end
     
-    -- Handle debounced pickup order updates
-    if needsPickupOrderUpdate and pickupOrderUpdateDebounce <= 0 then
-        UpdatePickupOrderForAllPlayers()
-        MarkHudDirty()
-        needsPickupOrderUpdate = false
-        pickupOrderUpdateDebounce = 10
-    elseif pickupOrderUpdateDebounce > 0 then
-        pickupOrderUpdateDebounce = pickupOrderUpdateDebounce - 1
+    -- Repentogon enhancement: Use frame-based timing for better performance
+    local currentFrame = 0
+    if REPENTOGON and Game().GetFrameCount then
+        currentFrame = Game():GetFrameCount()
+    else
+        -- Fallback to simple counter
+        if pickupOrderUpdateDebounce > 0 then
+            pickupOrderUpdateDebounce = pickupOrderUpdateDebounce - 1
+        end
+        currentFrame = lastUpdateFrame + 1
+        lastUpdateFrame = currentFrame
+    end
+    
+    -- Handle frame-based pickup order updates (update every 10 frames max)
+    if needsPickupOrderUpdate then
+        if REPENTOGON and Game().GetFrameCount then
+            if currentFrame - lastUpdateFrame >= 10 then
+                UpdatePickupOrderForAllPlayers()
+                MarkHudDirty()
+                needsPickupOrderUpdate = false
+                lastUpdateFrame = currentFrame
+            end
+        else
+            -- Fallback behavior
+            if pickupOrderUpdateDebounce <= 0 then
+                UpdatePickupOrderForAllPlayers()
+                MarkHudDirty()
+                needsPickupOrderUpdate = false
+                pickupOrderUpdateDebounce = 10
+            end
+        end
     end
 end, CallbackPriority and CallbackPriority.LATE or nil)
 
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_PEFFECT_UPDATE, function(_, player)
-    -- Only mark for update, don't do expensive scanning every frame
-    if pickupOrderUpdateDebounce <= 0 then
-        needsPickupOrderUpdate = true
-        pickupOrderUpdateDebounce = 10 -- Update at most every 10 frames
+    -- Repentogon enhancement: Use frame-based timing to reduce per-frame overhead
+    if REPENTOGON and Game().GetFrameCount then
+        local currentFrame = Game():GetFrameCount()
+        -- Only mark for update every 10 frames to reduce overhead
+        if currentFrame % 10 == 0 then
+            needsPickupOrderUpdate = true
+        end
     else
-        pickupOrderUpdateDebounce = pickupOrderUpdateDebounce - 1
+        -- Fallback: Only mark for update, don't do expensive scanning every frame
+        if pickupOrderUpdateDebounce <= 0 then
+            needsPickupOrderUpdate = true
+            pickupOrderUpdateDebounce = 10 -- Update at most every 10 frames
+        else
+            pickupOrderUpdateDebounce = pickupOrderUpdateDebounce - 1
+        end
     end
 end)
 
@@ -735,7 +768,12 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_PICKUP_UPDATE, function(_, pickup)
         if pickup:GetSprite():IsFinished("Collect") or pickup:IsDead() then
             -- Just mark that we need to update pickup order, don't do expensive scanning here
             needsPickupOrderUpdate = true
-            pickupOrderUpdateDebounce = 0 -- Update immediately on pickup
+            -- Repentogon enhancement: Use frame-based immediate update for pickups
+            if REPENTOGON and Game().GetFrameCount then
+                lastUpdateFrame = Game():GetFrameCount() - 10 -- Force immediate update on next frame
+            else
+                pickupOrderUpdateDebounce = 0 -- Update immediately on pickup
+            end
             MarkHudDirty()
         end
     end
@@ -1073,6 +1111,7 @@ end
 
 -- Cache for clamped config values
 local lastScreenW, lastScreenH = 0, 0
+local cachedClampedConfig = nil
 
 -- Clamp config values - now with reduced caching for better live updates
 local function GetClampedConfig(cfg, screenW, screenH)
@@ -1414,6 +1453,7 @@ function ExtraHUD:PostRender()
         
         currentRowY = currentRowY + rowMaxHeight + INTER_PLAYER_SPACING * layout.scale
     end
+    
     -- Debug overlay: color-coded sprite-based overlays
     if getConfig().debugOverlay then
         -- Draw HUD boundary in red for debug/adjustment
