@@ -548,22 +548,40 @@ local function UpdatePlayerIconData()
                 ownedSet[id] = true
             end
         end
+        
+        -- Build complete ordered list: starting items first, then pickup order
+        local orderedItems = {}
         local alreadyAdded = {}
-        -- First, add items in pickup order (if still owned)
+        
+        -- First, add any starting items that aren't in pickup order (these are oldest)
+        for id in pairs(ownedSet) do
+            local inPickupOrder = false
+            if playerPickupOrder[i] then
+                for _, pickupId in ipairs(playerPickupOrder[i]) do
+                    if pickupId == id then
+                        inPickupOrder = true
+                        break
+                    end
+                end
+            end
+            if not inPickupOrder then
+                table.insert(orderedItems, id)
+                alreadyAdded[id] = true
+            end
+        end
+        
+        -- Then, add items in pickup order (if still owned) - these are newer
         if playerPickupOrder[i] then
             for _, id in ipairs(playerPickupOrder[i]) do
-                if ownedSet[id] then
-                    table.insert(cachedPlayerIconData[i + 1], id)
+                if ownedSet[id] and not alreadyAdded[id] then
+                    table.insert(orderedItems, id)
                     alreadyAdded[id] = true
                 end
             end
         end
-        -- Then, add any currently owned items not already in pickup order (e.g. starting items)
-        for id in pairs(ownedSet) do
-            if not alreadyAdded[id] then
-                table.insert(cachedPlayerIconData[i + 1], id)
-            end
-        end
+        
+        -- Set the final ordered list
+        cachedPlayerIconData[i + 1] = orderedItems
     end
     cachedPlayerCount = totalPlayers
     hudDirty = false
@@ -583,24 +601,28 @@ local function TrackAllCurrentCollectibles()
             -- Ensure tracking tables exist
             if not playerTrackedCollectibles[i] then
                 playerTrackedCollectibles[i] = {}
-            else
-                -- Clear existing tracking for fresh start
-                playerTrackedCollectibles[i] = {}
             end
             
             -- Only scan up to MAX_ITEM_ID, skip high IDs unless needed
-            local startingItems = {}
             for id = 1, MAX_ITEM_ID do
                 if player:HasCollectible(id) and IsValidItem(id) then
                     playerTrackedCollectibles[i][id] = true
-                    table.insert(startingItems, id)
                 end
             end
             
-            -- Always reinitialize pickup order for fresh start
-            playerPickupOrder[i] = {}
-            for _, id in ipairs(startingItems) do
-                table.insert(playerPickupOrder[i], id)
+            -- Only initialize pickup order if it doesn't exist (fresh start)
+            if not playerPickupOrder[i] then
+                playerPickupOrder[i] = {}
+                -- For new tracking, add all current items as starting items
+                local startingItems = {}
+                for id = 1, MAX_ITEM_ID do
+                    if player:HasCollectible(id) and IsValidItem(id) then
+                        table.insert(startingItems, id)
+                    end
+                end
+                for _, id in ipairs(startingItems) do
+                    table.insert(playerPickupOrder[i], id)
+                end
             end
         end
     end
@@ -623,6 +645,10 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
     cachedPlayerCount = 0
     hudDirty = true
     cachedLayout.valid = false
+    
+    -- Clear pickup tracking for fresh game start
+    playerTrackedCollectibles = {}
+    playerPickupOrder = {}
     
     TrackAllCurrentCollectibles()
     -- Clear sprite cache on new game to prevent memory buildup
@@ -790,7 +816,6 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
                 hudDirty = true
                 cachedLayout.valid = false
                 MarkHudDirty()
-                print("[CoopExtraHUD] Backup detection triggered HUD update")
             end
         end
     else
@@ -1386,6 +1411,8 @@ function ExtraHUD:PostRender()
     -- Backup initialization check: ensure we have valid data even if game start callback was insufficient
     if not cachedPlayerIconData or not playerTrackedCollectibles or not playerPickupOrder then
         hudDirty = true
+        cachedPlayerIconData = nil
+        cachedLayout.valid = false
         TrackAllCurrentCollectibles()
     end
     
@@ -1393,6 +1420,8 @@ function ExtraHUD:PostRender()
     for i = 0, totalPlayers - 1 do
         if not playerTrackedCollectibles[i] or not playerPickupOrder[i] then
             hudDirty = true
+            cachedPlayerIconData = nil
+            cachedLayout.valid = false
             TrackAllCurrentCollectibles()
             Isaac.ConsoleOutput("[CoopExtraHUD] Found untracked player " .. i .. ", forcing update\n")
             break
