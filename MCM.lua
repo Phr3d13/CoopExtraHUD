@@ -91,6 +91,11 @@ function M.UpdateMCMOverlayDisplay()
         else
             ExtraHUD.MCMCompat_displayingTab = ""
         end
+        
+        -- Debug: Print MCM focus detection
+        if ExtraHUD.MCMCompat_displayingTab ~= "" then
+            print("[CoopExtraHUD MCM] Focus detected: " .. subcategoryName .. " -> " .. ExtraHUD.MCMCompat_displayingTab)
+        end
     else
         ExtraHUD.MCMCompat_displayingTab = ""
     end
@@ -310,7 +315,7 @@ function M.RegisterConfigMenu()
     -- HUD X Offset setting (automatic overlay when on this tab)
     addNum("xOffset", function() return config.xOffset end,
         function()
-            if ExtraHUD then ExtraHUD.MCMCompat_displayingTab = "HUD" end
+            if ExtraHUD then ExtraHUD.MCMCompat_displayingTab = "hud_offset" end
             return "HUD X Offset: " .. config.xOffset
         end,
         -200, 200, 5, function(v) config.xOffset = v; handleConfigChange() end,
@@ -319,7 +324,7 @@ function M.RegisterConfigMenu()
     -- HUD Y Offset setting (automatic overlay when on this tab)
     addNum("yOffset", function() return config.yOffset end,
         function()
-            if ExtraHUD then ExtraHUD.MCMCompat_displayingTab = "HUD" end
+            if ExtraHUD then ExtraHUD.MCMCompat_displayingTab = "hud_offset" end
             return "HUD Y Offset: " .. config.yOffset
         end,
         -200, 200, 5, function(v) config.yOffset = v; handleConfigChange() end,
@@ -338,7 +343,7 @@ function M.RegisterConfigMenu()
     for _, opt in ipairs(boundaryOptions) do
         addNum(opt.key, function() return config[opt.key] end,
             function()
-                if ExtraHUD then ExtraHUD.MCMCompat_displayingTab = "Boundaries" end
+                if ExtraHUD then ExtraHUD.MCMCompat_displayingTab = "boundary" end
                 return opt.name .. ": " .. config[opt.key]
             end,
             opt.min, opt.max, opt.step, function(v) config[opt.key] = v; handleConfigChange() end,
@@ -373,7 +378,7 @@ function M.RegisterConfigMenu()
     for _, opt in ipairs(minimapOptions) do
         addNum(opt.key, function() return config[opt.key] end,
             function()
-                if ExtraHUD then ExtraHUD.MCMCompat_displayingTab = "Minimap" end
+                if ExtraHUD then ExtraHUD.MCMCompat_displayingTab = "minimap" end
                 return opt.name .. ": " .. config[opt.key]
             end,
             opt.min, opt.max, opt.step, function(v) config[opt.key] = v; handleConfigChange() end,

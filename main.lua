@@ -27,6 +27,7 @@ local lastAutoResizeScreenW, lastAutoResizeScreenH = 0, 0
 local overlayToggleDebounce = 0
 local currentManualOverlayType = ""
 local lastMCMState = false
+local lastDisplayingTab = ""
 local VANILLA_ITEM_LIMIT = nil
 local SaveConfig, LoadConfig, UpdateCurrentPreset
 local mcmTables = nil -- MCM integration variable
@@ -120,8 +121,8 @@ local defaultConfig = {
     ySpacing = 0, -- updated default
     dividerOffset = 0, -- updated default
     dividerYOffset = 0, -- updated default
-    comboDividerXOffset = -16, -- updated from user's optimized settings
-    comboDividerYOffset = -10, -- updated from user's optimized settings
+    comboDividerXOffset = 0, -- zeroed since positioning now handled by baseGap calculation
+    comboDividerYOffset = 0, -- zeroed since positioning now handled by baseGap calculation
     xOffset = 0, -- updated default
     yOffset = 0, -- updated default
     opacity = 0.6, -- updated default
@@ -142,7 +143,7 @@ local defaultConfig = {
     itemLayoutMode = "2x2_grid", -- updated from user's optimized settings
     comboScale = 1.0, -- updated from user's optimized settings
     comboChunkGap = -20, -- updated from user's optimized settings
-    comboChunkDividerYOffset = -14, -- updated from user's optimized settings
+    comboChunkDividerYOffset = 0, -- zeroed since positioning now handled by baseGap calculation
     comboHeadToItemsGap = 20, -- updated from user's optimized settings
     autoAdjustOnResize = true, -- updated from user's optimized settings
     debugOverlay = false, -- updated from user's optimized settings
@@ -613,8 +614,15 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
     -- Disable vanilla ExtraHUD if configured
     DisableVanillaExtraHUD()
     
-    -- Reset player count tracking to ensure proper detection of all players
+    -- Reset startup tracking
+    gameStartupFrames = 0
     lastPlayerCount = 0
+    
+    -- Force clear all caches to ensure fresh state
+    cachedPlayerIconData = nil
+    cachedPlayerCount = 0
+    hudDirty = true
+    cachedLayout.valid = false
     
     TrackAllCurrentCollectibles()
     -- Clear sprite cache on new game to prevent memory buildup
@@ -627,7 +635,7 @@ end, CallbackPriority and CallbackPriority.LATE or nil)
 -- Forward declarations for pickup order functions
 local UpdatePickupOrderForPlayer, UpdatePickupOrderForAllPlayers
 
--- Maintain true pickup order for each player (optimized - only update when items change)
+-- Maintain pickup order integrity (cleanup function - removes lost items, doesn't reorder)
 local function UpdatePickupOrderForPlayer(playerIndex)
     local game = Game()
     if not game then return end
@@ -636,6 +644,7 @@ local function UpdatePickupOrderForPlayer(playerIndex)
     if not player then return end
     
     playerPickupOrder[playerIndex] = playerPickupOrder[playerIndex] or {}
+    playerTrackedCollectibles[playerIndex] = playerTrackedCollectibles[playerIndex] or {}
     
     -- Build current owned items set (limit to reasonable range for performance)
     local owned = {}
@@ -653,14 +662,17 @@ local function UpdatePickupOrderForPlayer(playerIndex)
         local itemId = playerPickupOrder[playerIndex][j]
         if not owned[itemId] then
             table.remove(playerPickupOrder[playerIndex], j)
+            playerTrackedCollectibles[playerIndex][itemId] = nil
         else
             j = j + 1
         end
     end
     
-    -- Add any new items not in the pickup order yet (scan in numerical order for consistency)
+    -- Only add items that we somehow missed (starting items, game reload, etc.)
+    -- These will be added at the end, preserving the true pickup order for items we tracked
     for id = 1, maxRange do
-        if owned[id] then
+        if owned[id] and not playerTrackedCollectibles[playerIndex][id] then
+            -- Check if it's already in pickup order (safety check)
             local found = false
             for _, itemId in ipairs(playerPickupOrder[playerIndex]) do
                 if itemId == id then
@@ -671,6 +683,7 @@ local function UpdatePickupOrderForPlayer(playerIndex)
             if not found then
                 table.insert(playerPickupOrder[playerIndex], id)
             end
+            playerTrackedCollectibles[playerIndex][id] = true
         end
     end
 end
@@ -686,14 +699,12 @@ local function UpdatePickupOrderForAllPlayers()
 end
 
 local lastPlayerCount = 0
+local gameStartupFrames = 0 -- Track frames since game start for initialization timing
 
--- Optimized: Only update pickup order when items actually change, not every frame
--- Use frame-based timing with Repentogon for better performance
+-- Periodic cleanup timing
 local pickupOrderUpdateDebounce = 0
-local needsPickupOrderUpdate = false
-local lastUpdateFrame = 0
 
--- Combined MC_POST_UPDATE: handle both player count changes and debounced pickup updates
+-- Combined MC_POST_UPDATE: handle player count changes and periodic cleanup
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
     local curCount = Game():GetNumPlayers()
     
@@ -728,76 +739,120 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
                 end
             end
         end
+        -- Force immediate cache invalidation and update
+        cachedPlayerIconData = nil
+        hudDirty = true
+        cachedLayout.valid = false
         MarkHudDirty()
         lastPlayerCount = curCount
+        Isaac.ConsoleOutput("[CoopExtraHUD] Player count changed to " .. curCount .. ", forcing HUD update\n")
     end
     
-    -- Repentogon enhancement: Use frame-based timing for better performance
-    local currentFrame = 0
+    -- Periodic cleanup: run maintenance every 60 frames to remove lost items
     if REPENTOGON and Game().GetFrameCount then
-        currentFrame = Game():GetFrameCount()
-    else
-        -- Fallback to simple counter
-        if pickupOrderUpdateDebounce > 0 then
-            pickupOrderUpdateDebounce = pickupOrderUpdateDebounce - 1
+        local currentFrame = Game():GetFrameCount()
+        if currentFrame % 60 == 0 then
+            UpdatePickupOrderForAllPlayers()
         end
-        currentFrame = lastUpdateFrame + 1
-        lastUpdateFrame = currentFrame
-    end
-    
-    -- Handle frame-based pickup order updates (update every 10 frames max)
-    if needsPickupOrderUpdate then
-        if REPENTOGON and Game().GetFrameCount then
-            if currentFrame - lastUpdateFrame >= 10 then
-                UpdatePickupOrderForAllPlayers()
-                MarkHudDirty()
-                needsPickupOrderUpdate = false
-                lastUpdateFrame = currentFrame
+        -- Also check for new items every 10 frames as backup
+        if currentFrame % 10 == 0 then
+            local itemsChanged = false
+            for i = 0, curCount - 1 do
+                local player = Isaac.GetPlayer(i)
+                if player then
+                    for id = 1, math.min(MAX_ITEM_ID, 500) do
+                        if player:HasCollectible(id) and IsValidItem(id) then
+                            playerTrackedCollectibles[i] = playerTrackedCollectibles[i] or {}
+                            playerPickupOrder[i] = playerPickupOrder[i] or {}
+                            if not playerTrackedCollectibles[i][id] then
+                                table.insert(playerPickupOrder[i], id)
+                                playerTrackedCollectibles[i][id] = true
+                                itemsChanged = true
+                                -- Debug: backup detection found new item
+                                local playerType = player:GetPlayerType()
+                                local playerName = "Player " .. (i+1)
+                                if playerType == PlayerType.PLAYER_JACOB then
+                                    playerName = "Jacob (P" .. (i+1) .. ")"
+                                elseif playerType == PlayerType.PLAYER_ESAU then
+                                    playerName = "Esau (P" .. (i+1) .. ")"
+                                end
+                                if Isaac.GetItemConfig():GetCollectible(id) then
+                                    local itemName = Isaac.GetItemConfig():GetCollectible(id).Name
+                                    Isaac.ConsoleOutput("[CoopExtraHUD] Backup detection: " .. playerName .. " has new item: " .. itemName .. " (ID: " .. id .. ")\n")
+                                end
+                            end
+                        end
+                    end
+                end
             end
+            if itemsChanged then
+                cachedPlayerIconData = nil
+                hudDirty = true
+                cachedLayout.valid = false
+                MarkHudDirty()
+                print("[CoopExtraHUD] Backup detection triggered HUD update")
+            end
+        end
+    else
+        -- Fallback: use simple counter for cleanup
+        if pickupOrderUpdateDebounce <= 0 then
+            UpdatePickupOrderForAllPlayers()
+            pickupOrderUpdateDebounce = 60 -- Run cleanup every 60 frames
         else
-            -- Fallback behavior
-            if pickupOrderUpdateDebounce <= 0 then
-                UpdatePickupOrderForAllPlayers()
-                MarkHudDirty()
-                needsPickupOrderUpdate = false
-                pickupOrderUpdateDebounce = 10
-            end
+            pickupOrderUpdateDebounce = pickupOrderUpdateDebounce - 1
         end
     end
 end, CallbackPriority and CallbackPriority.LATE or nil)
 
-ExtraHUD:AddCallback(ModCallbacks.MC_POST_PEFFECT_UPDATE, function(_, player)
-    -- Repentogon enhancement: Use frame-based timing to reduce per-frame overhead
-    if REPENTOGON and Game().GetFrameCount then
-        local currentFrame = Game():GetFrameCount()
-        -- Only mark for update every 10 frames to reduce overhead
-        if currentFrame % 10 == 0 then
-            needsPickupOrderUpdate = true
-        end
-    else
-        -- Fallback: Only mark for update, don't do expensive scanning every frame
-        if pickupOrderUpdateDebounce <= 0 then
-            needsPickupOrderUpdate = true
-            pickupOrderUpdateDebounce = 10 -- Update at most every 10 frames
-        else
-            pickupOrderUpdateDebounce = pickupOrderUpdateDebounce - 1
-        end
-    end
-end)
-
--- Simplified pickup detection - just mark for update, don't scan everything
+-- Real-time pickup order tracking - record actual pickup events
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_PICKUP_UPDATE, function(_, pickup)
     if pickup.Variant == PickupVariant.PICKUP_COLLECTIBLE then
-        if pickup:GetSprite():IsFinished("Collect") or pickup:IsDead() then
-            -- Just mark that we need to update pickup order, don't do expensive scanning here
-            needsPickupOrderUpdate = true
-            -- Repentogon enhancement: Use frame-based immediate update for pickups
-            if REPENTOGON and Game().GetFrameCount then
-                lastUpdateFrame = Game():GetFrameCount() - 10 -- Force immediate update on next frame
-            else
-                pickupOrderUpdateDebounce = 0 -- Update immediately on pickup
+        local itemId = pickup.SubType
+        local pickupSprite = pickup:GetSprite()
+        local isFinished = pickupSprite:IsFinished("Collect")
+        local isDead = pickup:IsDead()
+        
+        if isFinished or isDead then
+            -- Get the item ID that was just picked up
+            if itemId and itemId > 0 and IsValidItem(itemId) then
+                -- Find which player picked it up by checking who gained the item
+                local game = Game()
+                if game then
+                    -- Check each player individually, including Jacob & Esau separately
+                    for i = 0, game:GetNumPlayers() - 1 do
+                        local player = Isaac.GetPlayer(i)
+                        if player and player:HasCollectible(itemId) then
+                            -- Initialize arrays if needed
+                            playerPickupOrder[i] = playerPickupOrder[i] or {}
+                            playerTrackedCollectibles[i] = playerTrackedCollectibles[i] or {}
+                            
+                            -- Check if this is a new item (not already tracked)
+                            if not playerTrackedCollectibles[i][itemId] then
+                                table.insert(playerPickupOrder[i], itemId)
+                                playerTrackedCollectibles[i][itemId] = true
+                                -- Force immediate HUD update for item pickups
+                                cachedPlayerIconData = nil
+                                hudDirty = true
+                                cachedLayout.valid = false
+                                MarkHudDirty()
+                                -- Log pickup to game log file
+                                local playerType = player:GetPlayerType()
+                                local playerName = "Player " .. (i+1)
+                                if playerType == PlayerType.PLAYER_JACOB then
+                                    playerName = "Jacob (P" .. (i+1) .. ")"
+                                elseif playerType == PlayerType.PLAYER_ESAU then
+                                    playerName = "Esau (P" .. (i+1) .. ")"
+                                end
+                                if Isaac.GetItemConfig():GetCollectible(itemId) then
+                                    local itemName = Isaac.GetItemConfig():GetCollectible(itemId).Name
+                                    Isaac.ConsoleOutput("[CoopExtraHUD] " .. playerName .. " picked up: " .. itemName .. " (ID: " .. itemId .. ")\n")
+                                end
+                                -- Don't break here - multiple players might have picked up copies
+                            end
+                        end
+                    end
+                end
             end
-            MarkHudDirty()
         end
     end
 end)
@@ -906,8 +961,6 @@ ExtraHUD.MCMCompat_overlayTimestamp = 0
 -- EID-style automatic overlay detection
 ExtraHUD.MCMCompat_displayingTab = ""
 
--- Cache MCM state to avoid checking every frame
-local lastMCMState = false
 -- MCM integration variable (declared at module level above - don't redeclare here)
 -- Sprite-based overlay system (following MCM exact implementation)
 local function GetMenuAnm2Sprite(animation, frame)
@@ -1326,6 +1379,39 @@ function ExtraHUD:PostRender()
     -- Only update player icon data cache if dirty or player count changed
     local totalPlayers = game:GetNumPlayers()
     if totalPlayers <= 0 then return end -- No players, nothing to render
+    
+    -- Track startup frames for initialization timing
+    gameStartupFrames = gameStartupFrames + 1
+    
+    -- Backup initialization check: ensure we have valid data even if game start callback was insufficient
+    if not cachedPlayerIconData or not playerTrackedCollectibles or not playerPickupOrder then
+        hudDirty = true
+        TrackAllCurrentCollectibles()
+    end
+    
+    -- Additional check: ensure all current players are properly tracked
+    for i = 0, totalPlayers - 1 do
+        if not playerTrackedCollectibles[i] or not playerPickupOrder[i] then
+            hudDirty = true
+            TrackAllCurrentCollectibles()
+            Isaac.ConsoleOutput("[CoopExtraHUD] Found untracked player " .. i .. ", forcing update\n")
+            break
+        end
+    end
+    
+    -- Check for player count mismatch and force update if needed
+    if cachedPlayerCount ~= totalPlayers then
+        hudDirty = true
+        cachedPlayerIconData = nil
+        cachedLayout.valid = false
+        Isaac.ConsoleOutput("[CoopExtraHUD] Player count mismatch detected (" .. (cachedPlayerCount or 0) .. " vs " .. totalPlayers .. "), forcing update\n")
+    end
+    
+    -- Force update for first few frames to ensure proper initialization
+    if gameStartupFrames <= 5 then
+        hudDirty = true
+    end
+    
     if hudDirty or not cachedPlayerIconData or cachedPlayerCount ~= totalPlayers then
         UpdatePlayerIconData()
     end
@@ -1430,16 +1516,23 @@ function ExtraHUD:PostRender()
                                                           chunkX, currentRowY, cols, blockW, layout, cfg)
                         
                         -- Render horizontal divider
-                        local dividerY = jacobEndY + (cfg.comboChunkGap or 8) * layout.scale
+                        -- Position divider with better default spacing that reduces need for manual adjustment
+                        local baseGap = 4 * layout.scale -- Base gap between Jacob items and divider
+                        local dividerY = jacobEndY + baseGap
                         local dividerYOffset = (cfg.comboDividerYOffset or 0) * layout.scale
                         local dividerXOffset = (cfg.comboDividerXOffset or 0) * layout.scale
-                        local dividerW = blockW - 8 * layout.scale
+                        -- Make horizontal divider shorter - use actual item width instead of full block width
+                        local actualItemWidth = cols * ICON_SIZE * layout.scale + (cols - 1) * (cfg.xSpacing or 0) * layout.scale
+                        local dividerW = math.max(ICON_SIZE * layout.scale, actualItemWidth * 0.8) -- 80% of item width, minimum one icon width
+                        -- Center the divider horizontally within the block
+                        local dividerX = chunkX + (blockW - dividerW) / 2 + dividerXOffset
                         DividerSprite.Scale = Vector(dividerW, 1)
                         DividerSprite.Color = Color(1, 1, 1, cfg.opacity)
-                        DividerSprite:Render(Vector(chunkX + 4 * layout.scale + dividerXOffset, dividerY + dividerYOffset), Vector.Zero, Vector.Zero)
+                        DividerSprite:Render(Vector(dividerX, dividerY + dividerYOffset), Vector.Zero, Vector.Zero)
                         
                         -- Render Esau block
-                        local esauStartY = dividerY + (cfg.comboHeadToItemsGap or 8) * layout.scale
+                        -- Position Esau content with minimal gap after divider for tighter layout
+                        local esauStartY = dividerY + baseGap
                         RenderPlayerBlock(PlayerType.PLAYER_ESAU, esauItems, 
                                         chunkX, esauStartY, cols, blockW, layout, cfg)
                         
@@ -1461,12 +1554,16 @@ function ExtraHUD:PostRender()
                 -- Add vertical dividers between chunks in the same row (but not after the last chunk)
                 if col < layout.chunkCols and chunkIndex < actualPlayerCount then
                     local dividerX = chunkX + blockW + (INTER_PLAYER_SPACING * layout.scale) / 2 + ((-16 + (cfg.dividerOffset or 0)) * layout.scale)
-                    local dividerY = currentRowY + ((-32 + (cfg.dividerYOffset or 0)) * layout.scale)
-                    local dividerHeight = rowMaxHeight
+                    local dividerY = currentRowY + ((-44 + (cfg.dividerYOffset or 0)) * layout.scale)
+                    -- Make vertical divider shorter - exclude head icon area and add padding
+                    local headIconHeight = cfg.showCharHeadIcons and (ICON_SIZE * layout.scale + 16 * layout.scale) or 0
+                    local dividerStartPadding = headIconHeight + 8 * layout.scale -- Start below head icon with padding
+                    local dividerEndPadding = 8 * layout.scale -- End padding from bottom
+                    local dividerHeight = math.max(ICON_SIZE * layout.scale, rowMaxHeight - dividerStartPadding - dividerEndPadding)
                     local heightScale = math.max(1, math.floor(dividerHeight + 0.5))
                     DividerSprite.Scale = Vector(1, heightScale)
                     DividerSprite.Color = Color(1, 1, 1, cfg.opacity)
-                    DividerSprite:Render(Vector(dividerX, dividerY), Vector.Zero, Vector.Zero)
+                    DividerSprite:Render(Vector(dividerX, dividerY + dividerStartPadding), Vector.Zero, Vector.Zero)
                 end
                 
                 chunkX = chunkX + blockW + INTER_PLAYER_SPACING * layout.scale
@@ -1541,42 +1638,19 @@ function ExtraHUD:PostRender()
         mcmTables.UpdateMCMOverlayDisplay()
     end
     
+    -- Debug: Track overlay tab changes
+    local currentDisplayingTab = ExtraHUD.MCMCompat_displayingTab or ""
+    
     -- EID-style automatic overlay detection based on which MCM tab is being viewed
     local mcm = _G['ModConfigMenu']
     local mcmIsOpen = mcm and ((type(mcm.IsVisible) == "function" and mcm.IsVisible()) or (type(mcm.IsVisible) == "boolean" and mcm.IsVisible))
+    
+    -- Only update overlay state when MCM state changes
+    if mcmIsOpen ~= lastMCMState then
+        lastMCMState = mcmIsOpen
         
-        -- Only update overlay state when MCM state changes
-        if mcmIsOpen ~= lastMCMState then
-            lastMCMState = mcmIsOpen
-            
-            if mcmIsOpen then
-                -- MCM just opened - apply automatic overlays based on current tab
-                if ExtraHUD.MCMCompat_displayingTab == "hud_offset" then
-                    ExtraHUD.MCMCompat_displayingOverlay = "hudoffset"
-                    ExtraHUD.MCMCompat_selectedOverlay = "hudoffset"
-                elseif ExtraHUD.MCMCompat_displayingTab == "boundary" then
-                    ExtraHUD.MCMCompat_displayingOverlay = "boundary"
-                    ExtraHUD.MCMCompat_selectedOverlay = "boundary"
-                elseif ExtraHUD.MCMCompat_displayingTab == "minimap" then
-                    ExtraHUD.MCMCompat_displayingOverlay = "minimap"
-                    ExtraHUD.MCMCompat_selectedOverlay = "minimap"
-                elseif ExtraHUD.MCMCompat_displayingTab == "" then
-                    ExtraHUD.MCMCompat_displayingOverlay = ""
-                    ExtraHUD.MCMCompat_selectedOverlay = ""
-                end
-            else
-                -- MCM just closed - clear automatic overlays but keep manual ones
-                if ExtraHUD.MCMCompat_displayingTab ~= "" then
-                    ExtraHUD.MCMCompat_displayingTab = ""
-                    -- Only clear overlay flags if they weren't set manually
-                    if ExtraHUD.MCMCompat_displayingOverlay == "hudoffset" or ExtraHUD.MCMCompat_displayingOverlay == "boundary" or ExtraHUD.MCMCompat_displayingOverlay == "minimap" then
-                        ExtraHUD.MCMCompat_displayingOverlay = ""
-                        ExtraHUD.MCMCompat_selectedOverlay = ""
-                    end
-                end
-            end
-        elseif mcmIsOpen then
-            -- MCM is open and state didn't change - only update overlays if tab changed
+        if mcmIsOpen then
+            -- MCM just opened - apply automatic overlays based on current tab
             if ExtraHUD.MCMCompat_displayingTab == "hud_offset" then
                 ExtraHUD.MCMCompat_displayingOverlay = "hudoffset"
                 ExtraHUD.MCMCompat_selectedOverlay = "hudoffset"
@@ -1590,7 +1664,37 @@ function ExtraHUD:PostRender()
                 ExtraHUD.MCMCompat_displayingOverlay = ""
                 ExtraHUD.MCMCompat_selectedOverlay = ""
             end
+        else
+            -- MCM just closed - clear automatic overlays but keep manual ones
+            if ExtraHUD.MCMCompat_displayingTab ~= "" then
+                ExtraHUD.MCMCompat_displayingTab = ""
+                -- Only clear overlay flags if they weren't set manually
+                if ExtraHUD.MCMCompat_displayingOverlay == "hudoffset" or ExtraHUD.MCMCompat_displayingOverlay == "boundary" or ExtraHUD.MCMCompat_displayingOverlay == "minimap" then
+                    ExtraHUD.MCMCompat_displayingOverlay = ""
+                    ExtraHUD.MCMCompat_selectedOverlay = ""
+                end
+            end
         end
+    elseif mcmIsOpen then
+        -- MCM is open and state didn't change - only update overlays if tab changed
+        if ExtraHUD.MCMCompat_displayingTab == "hud_offset" then
+            ExtraHUD.MCMCompat_displayingOverlay = "hudoffset"
+            ExtraHUD.MCMCompat_selectedOverlay = "hudoffset"
+        elseif ExtraHUD.MCMCompat_displayingTab == "boundary" then
+            ExtraHUD.MCMCompat_displayingOverlay = "boundary"
+            ExtraHUD.MCMCompat_selectedOverlay = "boundary"
+        elseif ExtraHUD.MCMCompat_displayingTab == "minimap" then
+            ExtraHUD.MCMCompat_displayingOverlay = "minimap"
+            ExtraHUD.MCMCompat_selectedOverlay = "minimap"
+        elseif ExtraHUD.MCMCompat_displayingTab == "" then
+            ExtraHUD.MCMCompat_displayingOverlay = ""
+            ExtraHUD.MCMCompat_selectedOverlay = ""
+        end
+    end
+    
+    -- Update last tab state
+    if ExtraHUD.MCMCompat_displayingTab ~= lastDisplayingTab then
+        lastDisplayingTab = ExtraHUD.MCMCompat_displayingTab
     end
     
     -- Manual overlay controls available as backup (B=Boundary, M=Minimap, H=HUD Offset, N=None)
@@ -1601,12 +1705,12 @@ function ExtraHUD:PostRender()
     
     -- Show overlays if MCM is open OR if they were manually triggered
     if lastMCMState or ExtraHUD.MCMCompat_displayingOverlay ~= "" then
-        -- Check for boundary/minimap/hudoffset overlays using the dual-flag system
-        if ExtraHUD.MCMCompat_displayingOverlay == "boundary" and ExtraHUD.MCMCompat_selectedOverlay == "boundary" then
+        -- Simplified overlay detection - single flag system for better reliability
+        if ExtraHUD.MCMCompat_displayingOverlay == "boundary" then
             showBoundary = true
-        elseif ExtraHUD.MCMCompat_displayingOverlay == "minimap" and ExtraHUD.MCMCompat_selectedOverlay == "minimap" then
+        elseif ExtraHUD.MCMCompat_displayingOverlay == "minimap" then
             showMinimap = true
-        elseif ExtraHUD.MCMCompat_displayingOverlay == "hudoffset" and ExtraHUD.MCMCompat_selectedOverlay == "hudoffset" then
+        elseif ExtraHUD.MCMCompat_displayingOverlay == "hudoffset" then
             showHudOffset = true
         end
     end
@@ -1704,9 +1808,18 @@ function ExtraHUD:PostRender()
             Isaac.RenderText("HUD Position", actualHudX+4, actualHudY+4, 0, 1, 0, 1)
         end
     end
+end
 
 -- Also disable vanilla ExtraHUD on mod load (first load)
 DisableVanillaExtraHUD()
+
+-- Debug function to manually test overlay helpers (call from console)
+function ExtraHUD.TestOverlayHelpers(overlayType)
+    overlayType = overlayType or "boundary"
+    ExtraHUD.MCMCompat_displayingOverlay = overlayType
+    ExtraHUD.MCMCompat_selectedOverlay = overlayType
+    print("[CoopExtraHUD] Testing overlay: " .. overlayType .. " (press N to clear)")
+end
 
 -- Isaac best practice: Use explicit callback priority for render callbacks
 ExtraHUD:AddCallback(ModCallbacks.MC_POST_RENDER, ExtraHUD.PostRender, CallbackPriority and CallbackPriority.LATE or nil)
