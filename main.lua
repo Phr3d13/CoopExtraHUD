@@ -819,10 +819,39 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
             end
         end
     else
-        -- Fallback: use simple counter for cleanup
+        -- Fallback: scan for new items every 30 frames and mark HUD dirty if any are found
         if pickupOrderUpdateDebounce <= 0 then
+            local anyPlayerChanged = false
+            local game = Game()
+            local curCount = game:GetNumPlayers()
+            for i = 0, curCount - 1 do
+                local player = Isaac.GetPlayer(i)
+                local playerChanged = false
+                if player then
+                    for id = 1, math.min(MAX_ITEM_ID, 500) do
+                        if player:HasCollectible(id) and IsValidItem(id) then
+                            playerTrackedCollectibles[i] = playerTrackedCollectibles[i] or {}
+                            playerPickupOrder[i] = playerPickupOrder[i] or {}
+                            if not playerTrackedCollectibles[i][id] then
+                                table.insert(playerPickupOrder[i], id)
+                                playerTrackedCollectibles[i][id] = true
+                                playerChanged = true
+                            end
+                        end
+                    end
+                end
+                if playerChanged then
+                    anyPlayerChanged = true
+                end
+            end
+            if anyPlayerChanged then
+                cachedPlayerIconData = nil
+                hudDirty = true
+                cachedLayout.valid = false
+                MarkHudDirty()
+            end
             UpdatePickupOrderForAllPlayers()
-            pickupOrderUpdateDebounce = 60 -- Run cleanup every 60 frames
+            pickupOrderUpdateDebounce = 30 -- Run scan every 30 frames
         else
             pickupOrderUpdateDebounce = pickupOrderUpdateDebounce - 1
         end
@@ -830,52 +859,38 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
 end, CallbackPriority and CallbackPriority.LATE or nil)
 
 -- Real-time pickup order tracking - record actual pickup events
-ExtraHUD:AddCallback(ModCallbacks.MC_POST_PICKUP_UPDATE, function(_, pickup)
-    if pickup.Variant == PickupVariant.PICKUP_COLLECTIBLE then
-        local itemId = pickup.SubType
-        local pickupSprite = pickup:GetSprite()
-        local isFinished = pickupSprite:IsFinished("Collect")
-        local isDead = pickup:IsDead()
-        
-        if isFinished or isDead then
-            -- Get the item ID that was just picked up
-            if itemId and itemId > 0 and IsValidItem(itemId) then
-                -- Find which player picked it up by checking who gained the item
-                local game = Game()
-                if game then
-                    -- Check each player individually, including Jacob & Esau separately
-                    for i = 0, game:GetNumPlayers() - 1 do
-                        local player = Isaac.GetPlayer(i)
-                        if player and player:HasCollectible(itemId) then
-                            -- Initialize arrays if needed
-                            playerPickupOrder[i] = playerPickupOrder[i] or {}
-                            playerTrackedCollectibles[i] = playerTrackedCollectibles[i] or {}
-                            
-                            -- Check if this is a new item (not already tracked)
-                            if not playerTrackedCollectibles[i][itemId] then
-                                table.insert(playerPickupOrder[i], itemId)
-                                playerTrackedCollectibles[i][itemId] = true
-                                -- Force immediate HUD update for item pickups
-                                cachedPlayerIconData = nil
-                                hudDirty = true
-                                cachedLayout.valid = false
-                                MarkHudDirty()
-                                -- Log pickup to game log file
-                                local playerType = player:GetPlayerType()
-                                local playerName = "Player " .. (i+1)
-                                if playerType == PlayerType.PLAYER_JACOB then
-                                    playerName = "Jacob (P" .. (i+1) .. ")"
-                                elseif playerType == PlayerType.PLAYER_ESAU then
-                                    playerName = "Esau (P" .. (i+1) .. ")"
-                                end
-                                if Isaac.GetItemConfig():GetCollectible(itemId) then
-                                    local itemName = Isaac.GetItemConfig():GetCollectible(itemId).Name
-                                    Isaac.ConsoleOutput("[CoopExtraHUD] " .. playerName .. " picked up: " .. itemName .. " (ID: " .. itemId .. ")\n")
-                                end
-                                -- Don't break here - multiple players might have picked up copies
-                            end
-                        end
-                    end
+
+-- REPENTOGON: Use MC_POST_ADD_COLLECTIBLE for instant item tracking
+ExtraHUD:AddCallback(ModCallbacks.MC_POST_ADD_COLLECTIBLE, function(_, collectibleId, _, _, _, _, player)
+    if collectibleId and collectibleId > 0 and IsValidItem(collectibleId) and player ~= nil then
+        local playerObj = player
+        local playerIndex = nil
+        if type(playerObj) == "userdata" and type(playerObj.GetPlayerIndex) == "function" then
+            playerIndex = playerObj:GetPlayerIndex()
+        elseif type(playerObj) == "number" then
+            playerIndex = playerObj
+        end
+        if playerIndex ~= nil and type(playerIndex) == "number" and playerIndex >= 0 then
+            playerPickupOrder[playerIndex] = playerPickupOrder[playerIndex] or {}
+            playerTrackedCollectibles[playerIndex] = playerTrackedCollectibles[playerIndex] or {}
+            if not playerTrackedCollectibles[playerIndex][collectibleId] then
+                table.insert(playerPickupOrder[playerIndex], collectibleId)
+                playerTrackedCollectibles[playerIndex][collectibleId] = true
+                cachedPlayerIconData = nil
+                hudDirty = true
+                cachedLayout.valid = false
+                MarkHudDirty()
+                -- Log pickup to game log file
+                local playerType = Isaac.GetPlayer(playerIndex):GetPlayerType()
+                local playerName = "Player " .. (playerIndex+1)
+                if playerType == PlayerType.PLAYER_JACOB then
+                    playerName = "Jacob (P" .. (playerIndex+1) .. ")"
+                elseif playerType == PlayerType.PLAYER_ESAU then
+                    playerName = "Esau (P" .. (playerIndex+1) .. ")"
+                end
+                if Isaac.GetItemConfig():GetCollectible(collectibleId) then
+                    local itemName = Isaac.GetItemConfig():GetCollectible(collectibleId).Name
+                    Isaac.ConsoleOutput("[CoopExtraHUD] " .. playerName .. " picked up: " .. itemName .. " (ID: " .. collectibleId .. ")\n")
                 end
             end
         end
