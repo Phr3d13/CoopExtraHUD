@@ -594,26 +594,28 @@ end
 local function TrackAllCurrentCollectibles()
     local game = Game()
     local totalPlayers = game:GetNumPlayers()
-    
+
+    -- Always initialize tracking tables for all possible player indices
+    for i = 0, totalPlayers - 1 do
+        playerTrackedCollectibles[i] = playerTrackedCollectibles[i] or {}
+        playerPickupOrder[i] = playerPickupOrder[i] or {}
+    end
+
     for i = 0, totalPlayers - 1 do
         local player = Isaac.GetPlayer(i)
         if player then
-            -- Ensure tracking tables exist
-            if not playerTrackedCollectibles[i] then
-                playerTrackedCollectibles[i] = {}
-            end
-            
-            -- Only scan up to MAX_ITEM_ID, skip high IDs unless needed
+            -- Clear and rebuild tracked collectibles for this player
+            local tracked = {}
             for id = 1, MAX_ITEM_ID do
                 if player:HasCollectible(id) and IsValidItem(id) then
-                    playerTrackedCollectibles[i][id] = true
+                    tracked[id] = true
                 end
             end
-            
+            playerTrackedCollectibles[i] = tracked
+
             -- Only initialize pickup order if it doesn't exist (fresh start)
-            if not playerPickupOrder[i] then
+            if not playerPickupOrder[i] or #playerPickupOrder[i] == 0 then
                 playerPickupOrder[i] = {}
-                -- For new tracking, add all current items as starting items
                 local startingItems = {}
                 for id = 1, MAX_ITEM_ID do
                     if player:HasCollectible(id) and IsValidItem(id) then
@@ -624,15 +626,17 @@ local function TrackAllCurrentCollectibles()
                     table.insert(playerPickupOrder[i], id)
                 end
             end
+            -- Do NOT overwrite pickup order if it already exists; new pickups are handled by MC_POST_ADD_COLLECTIBLE
         end
     end
-    
+
     -- Update cached player count to match current state
     cachedPlayerCount = totalPlayers
 end
 
 -- Isaac best practice: Enhanced game start handling
-ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
+if ModCallbacks and ModCallbacks.MC_POST_GAME_STARTED then
+    ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
     -- Disable vanilla ExtraHUD if configured
     DisableVanillaExtraHUD()
     
@@ -649,6 +653,14 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
     -- Clear pickup tracking for fresh game start
     playerTrackedCollectibles = {}
     playerPickupOrder = {}
+    -- Ensure all player tables are initialized
+    local game = Game()
+    if game then
+        for i = 0, game:GetNumPlayers() - 1 do
+            playerTrackedCollectibles[i] = playerTrackedCollectibles[i] or {}
+            playerPickupOrder[i] = playerPickupOrder[i] or {}
+        end
+    end
     
     TrackAllCurrentCollectibles()
     -- Clear sprite cache on new game to prevent memory buildup
@@ -656,7 +668,8 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, _)
     spriteUsageTracker = {}
     characterHeadSpriteCache = {}
     MarkHudDirty()
-end, CallbackPriority and CallbackPriority.LATE or nil)
+    end, CallbackPriority and CallbackPriority.LATE or nil)
+end
 
 -- Forward declarations for pickup order functions
 local UpdatePickupOrderForPlayer, UpdatePickupOrderForAllPlayers
@@ -731,7 +744,8 @@ local gameStartupFrames = 0 -- Track frames since game start for initialization 
 local pickupOrderUpdateDebounce = 0
 
 -- Combined MC_POST_UPDATE: handle player count changes and periodic cleanup
-ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
+if ModCallbacks and ModCallbacks.MC_POST_UPDATE then
+    ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
     local curCount = Game():GetNumPlayers()
     
     -- Initialize lastPlayerCount if nil
@@ -856,12 +870,14 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_UPDATE, function()
             pickupOrderUpdateDebounce = pickupOrderUpdateDebounce - 1
         end
     end
-end, CallbackPriority and CallbackPriority.LATE or nil)
+    end, CallbackPriority and CallbackPriority.LATE or nil)
+end
 
 -- Real-time pickup order tracking - record actual pickup events
 
 -- REPENTOGON: Use MC_POST_ADD_COLLECTIBLE for instant item tracking
-ExtraHUD:AddCallback(ModCallbacks.MC_POST_ADD_COLLECTIBLE, function(_, collectibleId, _, _, _, _, player)
+if ModCallbacks and ModCallbacks.MC_POST_ADD_COLLECTIBLE then
+    ExtraHUD:AddCallback(ModCallbacks.MC_POST_ADD_COLLECTIBLE, function(_, collectibleId, _, _, _, _, player)
     if collectibleId and collectibleId > 0 and IsValidItem(collectibleId) and player ~= nil then
         local playerObj = player
         local playerIndex = nil
@@ -895,7 +911,8 @@ ExtraHUD:AddCallback(ModCallbacks.MC_POST_ADD_COLLECTIBLE, function(_, collectib
             end
         end
     end
-end)
+    end)
+end
 
 
 -- Render a single item icon (now uses cache with nil checks for modded items)
@@ -1866,12 +1883,16 @@ function ExtraHUD.TestOverlayHelpers(overlayType)
 end
 
 -- Isaac best practice: Use explicit callback priority for render callbacks
-ExtraHUD:AddCallback(ModCallbacks.MC_POST_RENDER, ExtraHUD.PostRender, CallbackPriority and CallbackPriority.LATE or nil)
+if ModCallbacks and ModCallbacks.MC_POST_RENDER then
+    ExtraHUD:AddCallback(ModCallbacks.MC_POST_RENDER, ExtraHUD.PostRender, CallbackPriority and CallbackPriority.LATE or nil)
+end
 
 -- Isaac best practice: Use early priority for config saving to ensure it happens before other cleanup
-ExtraHUD:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, function()
-    SaveConfig()
-end, CallbackPriority and CallbackPriority.EARLY or nil)
+if ModCallbacks and ModCallbacks.MC_PRE_GAME_EXIT then
+    ExtraHUD:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, function()
+        SaveConfig()
+    end, CallbackPriority and CallbackPriority.EARLY or nil)
+end
 
 -- Load saved config on startup
 LoadConfig()
